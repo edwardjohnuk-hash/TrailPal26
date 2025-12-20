@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import random
 import uuid
 from dataclasses import dataclass, field
 from typing import Optional
@@ -19,6 +20,48 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class SurfaceStats:
+    """Surface breakdown statistics for a route segment."""
+
+    # surface type -> distance in km
+    surfaces: dict[str, float] = field(default_factory=dict)
+    # way type -> distance in km
+    waytypes: dict[str, float] = field(default_factory=dict)
+    total_distance_km: float = 0.0
+
+    def surface_percentages(self) -> dict[str, float]:
+        """Get surface type percentages, sorted by percentage descending."""
+        if self.total_distance_km == 0:
+            return {}
+        percentages = {
+            surface: (distance / self.total_distance_km) * 100
+            for surface, distance in self.surfaces.items()
+        }
+        return dict(sorted(percentages.items(), key=lambda x: x[1], reverse=True))
+
+    def waytype_percentages(self) -> dict[str, float]:
+        """Get way type percentages, sorted by percentage descending."""
+        if self.total_distance_km == 0:
+            return {}
+        percentages = {
+            waytype: (distance / self.total_distance_km) * 100
+            for waytype, distance in self.waytypes.items()
+        }
+        return dict(sorted(percentages.items(), key=lambda x: x[1], reverse=True))
+
+    @classmethod
+    def from_dict(cls, data: Optional[dict]) -> Optional["SurfaceStats"]:
+        """Create from dictionary (e.g., from route_metadata)."""
+        if not data:
+            return None
+        return cls(
+            surfaces=data.get("surfaces", {}),
+            waytypes=data.get("waytypes", {}),
+            total_distance_km=data.get("total_distance_km", 0.0),
+        )
+
+
+@dataclass
 class DayRoute:
     """A single day's hiking route."""
 
@@ -30,6 +73,7 @@ class DayRoute:
     elevation_gain_m: Optional[float] = None
     elevation_loss_m: Optional[float] = None
     connection_id: Optional[uuid.UUID] = None
+    surface_stats: Optional[SurfaceStats] = None
 
 
 @dataclass
@@ -64,6 +108,7 @@ class ItineraryOptions:
     max_results: int = 10
     min_distance_km: float = 10.0
     max_distance_km: float = 20.0
+    randomize: bool = False  # If True, randomly select routes instead of top-scored
 
 
 class ItineraryGenerator:
@@ -142,16 +187,22 @@ class ItineraryGenerator:
 
         # Add edges (bidirectional for hiking)
         for conn in connections:
+            # Extract surface breakdown from route_metadata if available
+            surface_data = None
+            if conn.route_metadata and "surface_breakdown" in conn.route_metadata:
+                surface_data = conn.route_metadata["surface_breakdown"]
+
             edge_data = {
                 "connection_id": conn.id,
                 "distance_km": conn.distance_km,
                 "duration_minutes": conn.duration_minutes,
                 "elevation_gain_m": conn.elevation_gain_m,
                 "elevation_loss_m": conn.elevation_loss_m,
+                "surface_breakdown": surface_data,
             }
             # Add both directions
             graph.add_edge(conn.from_waypoint_id, conn.to_waypoint_id, **edge_data)
-            # Reverse direction has swapped elevation
+            # Reverse direction has swapped elevation (surface data is the same)
             reverse_data = edge_data.copy()
             reverse_data["elevation_gain_m"] = conn.elevation_loss_m
             reverse_data["elevation_loss_m"] = conn.elevation_gain_m
@@ -378,6 +429,11 @@ class ItineraryGenerator:
         for path in all_paths:
             days = []
             for i, (from_id, to_id, edge_data) in enumerate(path):
+                # Parse surface stats from edge data if available
+                surface_stats = SurfaceStats.from_dict(
+                    edge_data.get("surface_breakdown")
+                )
+
                 day = DayRoute(
                     day_number=i + 1,
                     start_waypoint=self._waypoints[from_id],
@@ -387,6 +443,7 @@ class ItineraryGenerator:
                     elevation_gain_m=edge_data.get("elevation_gain_m"),
                     elevation_loss_m=edge_data.get("elevation_loss_m"),
                     connection_id=edge_data.get("connection_id"),
+                    surface_stats=surface_stats,
                 )
                 days.append(day)
 
@@ -398,18 +455,28 @@ class ItineraryGenerator:
             itinerary.score = self._score_itinerary(days, options)
             itineraries.append(itinerary)
 
-        # Sort by score (best first) and limit results
-        itineraries.sort(key=lambda it: it.score, reverse=True)
-        itineraries = itineraries[: options.max_results]
+        # Select itineraries based on options
+        if options.randomize:
+            # Randomly sample from all itineraries
+            sample_size = min(options.max_results, len(itineraries))
+            itineraries = random.sample(itineraries, sample_size)
+            logger.info(f"Returning {len(itineraries)} random itineraries")
+        else:
+            # Sort by score (best first) and limit results
+            itineraries.sort(key=lambda it: it.score, reverse=True)
+            itineraries = itineraries[: options.max_results]
+            logger.info(f"Returning top {len(itineraries)} itineraries")
 
-        logger.info(f"Returning top {len(itineraries)} itineraries")
         return itineraries
 
-    def format_itinerary(self, itinerary: Itinerary) -> str:
+    def format_itinerary(
+        self, itinerary: Itinerary, show_surfaces: bool = False
+    ) -> str:
         """Format an itinerary as a human-readable string.
 
         Args:
             itinerary: Itinerary to format.
+            show_surfaces: Whether to include surface breakdown per day.
 
         Returns:
             Formatted string.
@@ -432,6 +499,32 @@ class ItineraryGenerator:
             lines.append(f"  Duration: {duration_h}h {duration_m}min")
             if day.elevation_gain_m:
                 lines.append(f"  Elevation: +{day.elevation_gain_m:.0f}m / -{day.elevation_loss_m or 0:.0f}m")
+
+            # Add surface breakdown if requested and available
+            if show_surfaces and day.surface_stats:
+                lines.append("  Surface breakdown:")
+                surface_pcts = day.surface_stats.surface_percentages()
+                for surface, pct in surface_pcts.items():
+                    distance = day.surface_stats.surfaces.get(surface, 0)
+                    # Create a simple bar visualization (10 chars max)
+                    bar_filled = int(pct / 10)
+                    bar = "▓" * bar_filled + "░" * (10 - bar_filled)
+                    # Format surface name for display
+                    surface_display = surface.replace("_", " ").title()
+                    lines.append(f"    {bar}  {surface_display:18} {pct:5.1f}%  ({distance:.1f} km)")
+
+                # Also show way types
+                lines.append("  Way types:")
+                waytype_pcts = day.surface_stats.waytype_percentages()
+                for waytype, pct in waytype_pcts.items():
+                    distance = day.surface_stats.waytypes.get(waytype, 0)
+                    bar_filled = int(pct / 10)
+                    bar = "▓" * bar_filled + "░" * (10 - bar_filled)
+                    waytype_display = waytype.replace("_", " ").title()
+                    lines.append(f"    {bar}  {waytype_display:18} {pct:5.1f}%  ({distance:.1f} km)")
+            elif show_surfaces and not day.surface_stats:
+                lines.append("  Surface breakdown: Not available (rebuild graph to fetch)")
+
             lines.append("")
 
         return "\n".join(lines)

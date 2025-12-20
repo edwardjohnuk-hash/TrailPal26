@@ -199,12 +199,25 @@ def graph_stats(region: str):
     is_flag=True,
     help="Don't prefer waypoints with accommodation",
 )
+@click.option(
+    "--show-surfaces",
+    is_flag=True,
+    help="Show surface type breakdown for each day",
+)
+@click.option(
+    "--random",
+    "randomize",
+    is_flag=True,
+    help="Randomize results instead of returning top-scored routes",
+)
 def generate(
     region: str,
     days: int,
     start: Optional[str],
     results: int,
     no_accommodation: bool,
+    show_surfaces: bool,
+    randomize: bool,
 ):
     """Generate hiking itineraries."""
     click.echo(f"Generating {days}-day itineraries for {region}...")
@@ -214,6 +227,7 @@ def generate(
         start_waypoint_name=start,
         prefer_accommodation=not no_accommodation,
         max_results=results,
+        randomize=randomize,
     )
 
     try:
@@ -231,7 +245,7 @@ def generate(
             click.echo(f"{'=' * 50}")
             click.echo(f"Option {i} (Score: {itinerary.score:.1f})")
             click.echo(f"{'=' * 50}")
-            click.echo(generator.format_itinerary(itinerary))
+            click.echo(generator.format_itinerary(itinerary, show_surfaces=show_surfaces))
 
         generator.close()
 
@@ -278,12 +292,19 @@ def generate(
     default="gpx",
     help="Output format",
 )
+@click.option(
+    "--random",
+    "randomize",
+    is_flag=True,
+    help="Export a random route instead of top-scored",
+)
 def export(
     region: str,
     days: int,
     start: Optional[str],
     output: str,
     output_format: str,
+    randomize: bool,
 ):
     """Export the best itinerary to GPX or JSON."""
     click.echo(f"Generating and exporting itinerary...")
@@ -292,6 +313,7 @@ def export(
         num_days=days,
         start_waypoint_name=start,
         max_results=1,
+        randomize=randomize,
     )
 
     try:
@@ -303,6 +325,10 @@ def export(
             sys.exit(1)
 
         itinerary = itineraries[0]
+        
+        # Show which route was selected
+        click.echo(f"Route: {itinerary.days[0].start_waypoint.name} → ... → {itinerary.days[-1].end_waypoint.name}")
+        click.echo(f"Total: {itinerary.total_distance_km:.1f} km, {len(itinerary.days)} days")
 
         if output_format == "gpx":
             _export_gpx(itinerary, output)
@@ -552,6 +578,16 @@ def _export_json(itinerary: Itinerary, output_path: str):
             "elevation_gain_m": day.elevation_gain_m,
             "elevation_loss_m": day.elevation_loss_m,
         }
+
+        # Include surface breakdown if available
+        if day.surface_stats:
+            day_data["surface_breakdown"] = {
+                "surfaces": day.surface_stats.surfaces,
+                "waytypes": day.surface_stats.waytypes,
+                "surface_percentages": day.surface_stats.surface_percentages(),
+                "waytype_percentages": day.surface_stats.waytype_percentages(),
+            }
+
         data["days"].append(day_data)
 
     with open(output_path, "w") as f:

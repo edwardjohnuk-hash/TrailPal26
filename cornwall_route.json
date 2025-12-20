@@ -1,0 +1,67 @@
+{
+  "id": "6a58d153-04d7-4500-ba3c-97dd9bb7ecf5",
+  "region": "cornwall",
+  "total_distance_km": 40.4356,
+  "total_duration_minutes": 484,
+  "total_elevation_gain_m": 1031.0,
+  "score": 118.45690849111111,
+  "days": [
+    {
+      "day_number": 1,
+      "start": {
+        "name": "Trevalgan Holiday Farm",
+        "type": "campsite",
+        "latitude": 50.2077405,
+        "longitude": -5.5186831
+      },
+      "end": {
+        "name": "YHA Penzance",
+        "type": "hostel",
+        "latitude": 50.1178704,
+        "longitude": -5.5580505
+      },
+      "distance_km": 14.177299999999999,
+      "duration_minutes": 170,
+      "elevation_gain_m": 254.1,
+      "elevation_loss_m": 323.1
+    },
+    {
+      "day_number": 2,
+      "start": {
+        "name": "YHA Penzance",
+        "type": "hostel",
+        "latitude": 50.1178704,
+        "longitude": -5.5580505
+      },
+      "end": {
+        "name": "Land's End Youth Hostel",
+        "type": "hostel",
+        "latitude": 50.1159562,
+        "longitude": -5.6882085
+      },
+      "distance_km": 12.4595,
+      "duration_minutes": 149,
+      "elevation_gain_m": 267.3,
+      "elevation_loss_m": 222.3
+    },
+    {
+      "day_number": 3,
+      "start": {
+        "name": "Land's End Youth Hostel",
+        "type": "hostel",
+        "latitude": 50.1159562,
+        "longitude": -5.6882085
+      },
+      "end": {
+        "name": "Sea View House",
+        "type": "guest_house",
+        "latitude": 50.0474434,
+        "longitude": -5.6572787
+      },
+      "distance_km": 13.7988,
+      "duration_minutes": 165,
+      "elevation_gain_m": 509.6,
+      "elevation_loss_m": 543.1
+    }
+  ]
+}

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 import httpx
@@ -13,6 +14,94 @@ import httpx
 from trail_pal.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+# ORS surface type value mappings
+SURFACE_TYPES = {
+    0: "unknown",
+    1: "paved",
+    2: "unpaved",
+    3: "asphalt",
+    4: "concrete",
+    5: "cobblestone",
+    6: "metal",
+    7: "wood",
+    8: "compacted_gravel",
+    9: "fine_gravel",
+    10: "gravel",
+    11: "dirt",
+    12: "ground",
+    13: "ice",
+    14: "paving_stones",
+    15: "sand",
+    16: "woodchips",
+    17: "grass",
+    18: "grass_paver",
+}
+
+# ORS way type value mappings
+WAY_TYPES = {
+    0: "unknown",
+    1: "state_road",
+    2: "road",
+    3: "street",
+    4: "path",
+    5: "track",
+    6: "cycleway",
+    7: "footway",
+    8: "steps",
+    9: "ferry",
+    10: "construction",
+}
+
+
+@dataclass
+class SurfaceBreakdown:
+    """Breakdown of route by surface and way types."""
+
+    # surface type -> distance in km
+    surfaces: dict[str, float] = field(default_factory=dict)
+    # way type -> distance in km
+    waytypes: dict[str, float] = field(default_factory=dict)
+    # Total distance for validation
+    total_distance_km: float = 0.0
+
+    def surface_percentages(self) -> dict[str, float]:
+        """Get surface type percentages, sorted by percentage descending."""
+        if self.total_distance_km == 0:
+            return {}
+        percentages = {
+            surface: (distance / self.total_distance_km) * 100
+            for surface, distance in self.surfaces.items()
+        }
+        return dict(sorted(percentages.items(), key=lambda x: x[1], reverse=True))
+
+    def waytype_percentages(self) -> dict[str, float]:
+        """Get way type percentages, sorted by percentage descending."""
+        if self.total_distance_km == 0:
+            return {}
+        percentages = {
+            waytype: (distance / self.total_distance_km) * 100
+            for waytype, distance in self.waytypes.items()
+        }
+        return dict(sorted(percentages.items(), key=lambda x: x[1], reverse=True))
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "surfaces": self.surfaces,
+            "waytypes": self.waytypes,
+            "total_distance_km": self.total_distance_km,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "SurfaceBreakdown":
+        """Create from dictionary."""
+        return cls(
+            surfaces=data.get("surfaces", {}),
+            waytypes=data.get("waytypes", {}),
+            total_distance_km=data.get("total_distance_km", 0.0),
+        )
 
 
 @dataclass
@@ -25,6 +114,7 @@ class RouteResult:
     elevation_loss_m: Optional[float]
     geometry: list[tuple[float, float]]  # List of (lon, lat) coordinates
     metadata: dict
+    surface_breakdown: Optional[SurfaceBreakdown] = None
 
 
 class RateLimiter:
@@ -135,6 +225,7 @@ class OpenRouteServiceClient:
             "instructions": False,
             "geometry_simplify": False,  # Get full geometry
             "preference": "recommended",  # hiking-appropriate routing
+            "extra_info": ["surface", "waytype"],  # Request surface and way type data
         }
 
         try:
@@ -190,11 +281,18 @@ class OpenRouteServiceClient:
                     geometry = self._decode_polyline(geometry_encoded, is_3d=True)
                 except Exception:
                     # Skip geometry if decoding fails
-                    logger.debug(f"Failed to decode polyline, skipping geometry")
+                    logger.debug("Failed to decode polyline, skipping geometry")
+
+            # Parse surface and waytype extras
+            surface_breakdown = self._parse_extras(route, geometry)
 
             metadata = {
                 "way_points": route.get("way_points", []),
             }
+            
+            # Include surface breakdown in metadata for storage
+            if surface_breakdown:
+                metadata["surface_breakdown"] = surface_breakdown.to_dict()
 
             return RouteResult(
                 distance_km=distance_km,
@@ -203,11 +301,112 @@ class OpenRouteServiceClient:
                 elevation_loss_m=elevation_loss_m,
                 geometry=geometry,
                 metadata=metadata,
+                surface_breakdown=surface_breakdown,
             )
 
         except Exception as e:
             logger.error(f"Failed to parse ORS response: {e}")
             return None
+
+    def _parse_extras(
+        self, route: dict, geometry: list[tuple[float, float]]
+    ) -> Optional[SurfaceBreakdown]:
+        """Parse extra_info from ORS response to calculate surface breakdown.
+
+        Args:
+            route: Route object from ORS response.
+            geometry: Decoded geometry coordinates.
+
+        Returns:
+            SurfaceBreakdown or None if parsing fails.
+        """
+        extras = route.get("extras", {})
+        if not extras or not geometry:
+            return None
+
+        try:
+            # Calculate distances between consecutive geometry points
+            segment_distances = self._calculate_segment_distances(geometry)
+            total_distance = sum(segment_distances)
+
+            surfaces: dict[str, float] = {}
+            waytypes: dict[str, float] = {}
+
+            # Parse surface data
+            surface_data = extras.get("surface", {}).get("values", [])
+            for start_idx, end_idx, value in surface_data:
+                surface_name = SURFACE_TYPES.get(value, f"unknown_{value}")
+                # Sum distances for segments in this range
+                segment_distance = sum(segment_distances[start_idx:end_idx])
+                surfaces[surface_name] = surfaces.get(surface_name, 0) + segment_distance
+
+            # Parse waytype data
+            waytype_data = extras.get("waytype", {}).get("values", [])
+            for start_idx, end_idx, value in waytype_data:
+                waytype_name = WAY_TYPES.get(value, f"unknown_{value}")
+                segment_distance = sum(segment_distances[start_idx:end_idx])
+                waytypes[waytype_name] = waytypes.get(waytype_name, 0) + segment_distance
+
+            # Convert from meters to km
+            surfaces_km = {k: v / 1000.0 for k, v in surfaces.items()}
+            waytypes_km = {k: v / 1000.0 for k, v in waytypes.items()}
+            total_km = total_distance / 1000.0
+
+            return SurfaceBreakdown(
+                surfaces=surfaces_km,
+                waytypes=waytypes_km,
+                total_distance_km=total_km,
+            )
+
+        except Exception as e:
+            logger.warning(f"Failed to parse surface extras: {e}")
+            return None
+
+    def _calculate_segment_distances(
+        self, geometry: list[tuple[float, float]]
+    ) -> list[float]:
+        """Calculate distances between consecutive geometry points.
+
+        Args:
+            geometry: List of (lon, lat) coordinate tuples.
+
+        Returns:
+            List of distances in meters between consecutive points.
+        """
+        distances = []
+        for i in range(len(geometry) - 1):
+            lon1, lat1 = geometry[i]
+            lon2, lat2 = geometry[i + 1]
+            distance = self._haversine_distance(lon1, lat1, lon2, lat2)
+            distances.append(distance)
+        return distances
+
+    def _haversine_distance(
+        self, lon1: float, lat1: float, lon2: float, lat2: float
+    ) -> float:
+        """Calculate distance between two points using Haversine formula.
+
+        Args:
+            lon1, lat1: First point coordinates.
+            lon2, lat2: Second point coordinates.
+
+        Returns:
+            Distance in meters.
+        """
+        R = 6371000  # Earth's radius in meters
+
+        lat1_rad = math.radians(lat1)
+        lat2_rad = math.radians(lat2)
+        delta_lat = math.radians(lat2 - lat1)
+        delta_lon = math.radians(lon2 - lon1)
+
+        a = (
+            math.sin(delta_lat / 2) ** 2
+            + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lon / 2) ** 2
+        )
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+        return R * c
 
     def _decode_polyline(
         self, encoded: str, is_3d: bool = False, precision: int = 5
@@ -312,8 +511,6 @@ def calculate_straight_line_distance_km(
     Returns:
         Distance in kilometers.
     """
-    import math
-
     R = 6371.0  # Earth's radius in km
 
     lat1_rad = math.radians(lat1)
