@@ -1,0 +1,19 @@
+# Railway deployment configuration for Trail Pal API
+
+[build]
+# Use Dockerfile for building
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# Number of instances to run
+numReplicas = 1
+
+# Health check endpoint
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+
+# Restart policy
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
+
