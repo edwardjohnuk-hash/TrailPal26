@@ -298,6 +298,11 @@ def generate(
     is_flag=True,
     help="Export a random route instead of top-scored",
 )
+@click.option(
+    "--fresh",
+    is_flag=True,
+    help="Fetch fresh routes from API instead of using cached database routes",
+)
 def export(
     region: str,
     days: int,
@@ -305,6 +310,7 @@ def export(
     output: str,
     output_format: str,
     randomize: bool,
+    fresh: bool,
 ):
     """Export the best itinerary to GPX or JSON."""
     click.echo(f"Generating and exporting itinerary...")
@@ -331,7 +337,7 @@ def export(
         click.echo(f"Total: {itinerary.total_distance_km:.1f} km, {len(itinerary.days)} days")
 
         if output_format == "gpx":
-            _export_gpx(itinerary, output)
+            _export_gpx(itinerary, output, fetch_fresh=fresh)
         else:
             _export_json(itinerary, output)
 
@@ -344,8 +350,14 @@ def export(
         sys.exit(1)
 
 
-def _export_gpx(itinerary: Itinerary, output_path: str):
-    """Export itinerary to GPX format with full trail geometry."""
+def _export_gpx(itinerary: Itinerary, output_path: str, fetch_fresh: bool = False):
+    """Export itinerary to GPX format with full trail geometry.
+    
+    Args:
+        itinerary: The itinerary to export.
+        output_path: Path to write the GPX file.
+        fetch_fresh: If True, always fetch fresh routes from ORS API.
+    """
     from geoalchemy2.shape import to_shape
     from sqlalchemy import select
     from trail_pal.db.database import SessionLocal
@@ -386,6 +398,11 @@ def _export_gpx(itinerary: Itinerary, output_path: str):
         # Check if we need to fetch any routes on-the-fly
         needs_fetch = []
         for day in itinerary.days:
+            # If fetch_fresh is True, always fetch new routes
+            if fetch_fresh:
+                needs_fetch.append(day)
+                continue
+                
             has_geometry = False
             
             # Check forward connection

@@ -35,13 +35,10 @@ RUN chown -R appuser:appuser /app
 # Switch to non-root user
 USER appuser
 
-# Expose the API port
+# Expose the API port (Railway uses dynamic PORT env var)
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"
-
-# Run the API with uvicorn
-CMD ["uvicorn", "trail_pal.api:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run the API with uvicorn using Railway's PORT environment variable
+# Railway sets PORT dynamically, defaulting to 8000 if not set
+CMD uvicorn trail_pal.api:app --host 0.0.0.0 --port ${PORT:-8000}
 
