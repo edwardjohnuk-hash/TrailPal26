@@ -326,35 +326,42 @@ async def health_check():
     "/regions",
     response_model=list[RegionResponse],
     tags=["Regions"],
-    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}},
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
 )
 async def list_regions(
     db: Session = Depends(get_db),
     _api_key: str = Depends(optional_api_key),
 ):
     """List all available hiking regions."""
-    stmt = select(Region)
-    regions = list(db.execute(stmt).scalars().all())
+    try:
+        stmt = select(Region)
+        regions = list(db.execute(stmt).scalars().all())
 
-    result = []
-    for region in regions:
-        # Count waypoints for each region
-        count_stmt = select(func.count(Waypoint.id)).where(
-            Waypoint.region_id == region.id
-        )
-        waypoint_count = db.execute(count_stmt).scalar() or 0
-
-        result.append(
-            RegionResponse(
-                id=region.id,
-                name=region.name,
-                country=region.country,
-                description=region.description,
-                waypoint_count=waypoint_count,
+        result = []
+        for region in regions:
+            # Count waypoints for each region
+            count_stmt = select(func.count(Waypoint.id)).where(
+                Waypoint.region_id == region.id
             )
-        )
+            waypoint_count = db.execute(count_stmt).scalar() or 0
 
-    return result
+            result.append(
+                RegionResponse(
+                    id=region.id,
+                    name=region.name,
+                    country=region.country,
+                    description=region.description,
+                    waypoint_count=waypoint_count,
+                )
+            )
+
+        return result
+    except Exception as e:
+        logger.error(f"Error listing regions: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {str(e)}",
+        )
 
 
 @app.get(
