@@ -303,6 +303,51 @@ if static_dir.exists():
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 
+# --- Startup Events ---
+
+
+@app.on_event("startup")
+async def warmup_graph_cache():
+    """Pre-load graph cache for known regions on startup.
+    
+    This avoids a 15-20 second delay on the first itinerary request
+    by loading the 1.4M+ overlap records into memory at startup.
+    """
+    import asyncio
+    
+    # Run cache warmup in background to not block startup
+    async def warmup():
+        try:
+            logger.info("Warming up graph cache...")
+            generator = ItineraryGenerator()
+            
+            # Get all regions from database
+            db = SessionLocal()
+            try:
+                stmt = select(Region)
+                regions = list(db.execute(stmt).scalars().all())
+                region_names = [r.name for r in regions]
+            finally:
+                db.close()
+            
+            # Pre-load graph for each region
+            for region_name in region_names:
+                try:
+                    options = ItineraryOptions(num_days=1, max_results=1)
+                    generator.generate(region_name, options)
+                    logger.info(f"Graph cache warmed for region: {region_name}")
+                except Exception as e:
+                    logger.warning(f"Failed to warm cache for {region_name}: {e}")
+            
+            generator.close()
+            logger.info("Graph cache warmup complete")
+        except Exception as e:
+            logger.error(f"Graph cache warmup failed: {e}")
+    
+    # Start warmup as background task (don't block startup)
+    asyncio.create_task(warmup())
+
+
 # --- Routes ---
 
 

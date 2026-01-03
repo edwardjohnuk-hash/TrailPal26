@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import logging
 import random
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Optional
 
 import networkx as nx
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from trail_pal.config import get_settings
@@ -17,6 +18,11 @@ from trail_pal.db.database import SessionLocal
 from trail_pal.db.models import Connection, ConnectionOverlap, Region, Waypoint, WaypointType
 
 logger = logging.getLogger(__name__)
+
+# Module-level cache for graph data to avoid reloading on every request
+# This is the main performance optimization - loading 1.4M overlaps takes ~20s
+_graph_cache: dict[str, tuple[nx.DiGraph, dict, dict, float]] = {}
+_CACHE_TTL_SECONDS = 300  # 5 minute cache TTL
 
 
 @dataclass
@@ -115,6 +121,10 @@ class ItineraryOptions:
 class ItineraryGenerator:
     """Generator for multi-day hiking itineraries using graph traversal."""
 
+    # Maximum paths to explore before early termination
+    # This prevents excessive search times while still finding good routes
+    MAX_PATHS_TO_EXPLORE = 50000
+
     def __init__(self, db: Optional[Session] = None):
         """Initialize the generator.
 
@@ -129,6 +139,8 @@ class ItineraryGenerator:
         # Overlap lookup: (connection_a_id, connection_b_id) -> overlap_km
         # Stores both orderings for O(1) lookup
         self._overlaps: dict[tuple[uuid.UUID, uuid.UUID], float] = {}
+        # Counter for early termination
+        self._paths_found = 0
 
     def _get_db(self) -> Session:
         """Get or create database session."""
@@ -145,12 +157,37 @@ class ItineraryGenerator:
     def _load_graph(self, region_name: str) -> nx.DiGraph:
         """Load the feasibility graph from the database.
 
+        Uses module-level caching to avoid reloading 1.4M+ overlap records
+        on every request. Cache is invalidated after TTL expires.
+
         Args:
             region_name: Name of the region.
 
         Returns:
             NetworkX directed graph.
         """
+        global _graph_cache
+
+        cache_key = region_name.lower()
+        now = time.time()
+
+        # Check cache first
+        if cache_key in _graph_cache:
+            cached_graph, cached_waypoints, cached_overlaps, cached_time = _graph_cache[cache_key]
+            if now - cached_time < _CACHE_TTL_SECONDS:
+                logger.info(
+                    f"Using cached graph for {region_name} "
+                    f"(age: {now - cached_time:.0f}s)"
+                )
+                self._waypoints = cached_waypoints
+                self._overlaps = cached_overlaps
+                return cached_graph
+            else:
+                logger.info(f"Cache expired for {region_name}, reloading...")
+                del _graph_cache[cache_key]
+
+        # Cache miss - load from database
+        load_start = time.time()
         db = self._get_db()
 
         # Get region
@@ -217,13 +254,31 @@ class ItineraryGenerator:
             f"and {graph.number_of_edges()} edges"
         )
 
-        # Load pre-computed overlap data for fast filtering
-        self._load_overlaps(wp_ids)
+        # Load pre-computed overlap data for fast filtering (optimized query)
+        self._load_overlaps_fast(wp_ids)
+
+        # Cache the loaded data
+        _graph_cache[cache_key] = (graph, self._waypoints.copy(), self._overlaps.copy(), now)
+        
+        load_time = time.time() - load_start
+        logger.info(f"Graph loaded and cached in {load_time:.2f}s")
 
         return graph
 
     def _load_overlaps(self, waypoint_ids: list[uuid.UUID]) -> None:
         """Load pre-computed overlap data into memory for fast lookup.
+
+        Args:
+            waypoint_ids: List of waypoint IDs in the region.
+        """
+        # Delegate to the faster implementation
+        self._load_overlaps_fast(waypoint_ids)
+
+    def _load_overlaps_fast(self, waypoint_ids: list[uuid.UUID]) -> None:
+        """Load pre-computed overlap data using optimized query.
+
+        This version fetches only the columns we need (not full ORM objects)
+        to reduce memory and serialization overhead for 1.4M+ rows.
 
         Args:
             waypoint_ids: List of waypoint IDs in the region.
@@ -240,20 +295,25 @@ class ItineraryGenerator:
             logger.info("No connections found, skipping overlap loading")
             return
 
-        # Load overlaps for these connections
-        overlap_stmt = select(ConnectionOverlap).where(
+        # Fetch only the columns we need (much faster than loading full ORM objects)
+        overlap_stmt = select(
+            ConnectionOverlap.connection_a_id,
+            ConnectionOverlap.connection_b_id,
+            ConnectionOverlap.overlap_km,
+        ).where(
             ConnectionOverlap.connection_a_id.in_(conn_ids) |
             ConnectionOverlap.connection_b_id.in_(conn_ids)
         )
-        overlaps = list(db.execute(overlap_stmt).scalars().all())
+        
+        result = db.execute(overlap_stmt).fetchall()
 
         # Build lookup dict with both orderings for O(1) access
         self._overlaps.clear()
-        for overlap in overlaps:
-            self._overlaps[(overlap.connection_a_id, overlap.connection_b_id)] = overlap.overlap_km
-            self._overlaps[(overlap.connection_b_id, overlap.connection_a_id)] = overlap.overlap_km
+        for conn_a, conn_b, overlap_km in result:
+            self._overlaps[(conn_a, conn_b)] = overlap_km
+            self._overlaps[(conn_b, conn_a)] = overlap_km
 
-        logger.info(f"Loaded {len(overlaps)} overlap records into memory")
+        logger.info(f"Loaded {len(result)} overlap records into memory")
 
     def _get_overlap(
         self, connection_a_id: Optional[uuid.UUID], connection_b_id: Optional[uuid.UUID]
@@ -418,7 +478,7 @@ class ItineraryGenerator:
         current_path: list[tuple[uuid.UUID, uuid.UUID, dict]],
         max_overlap_km: float = 3.0,
     ) -> list[list[tuple[uuid.UUID, uuid.UUID, dict]]]:
-        """Find all valid paths using depth-first search.
+        """Find valid paths using depth-first search with early termination.
 
         Args:
             graph: NetworkX graph.
@@ -431,13 +491,22 @@ class ItineraryGenerator:
         Returns:
             List of valid complete paths.
         """
+        # Early termination check - stop if we've found enough paths
+        if self._paths_found >= self.MAX_PATHS_TO_EXPLORE:
+            return []
+
         if num_days == 0:
+            self._paths_found += 1
             return [current_path.copy()]
 
         paths = []
         visited.add(start_node)
 
         for neighbor in graph.neighbors(start_node):
+            # Early termination check inside loop
+            if self._paths_found >= self.MAX_PATHS_TO_EXPLORE:
+                break
+
             if neighbor not in visited:
                 edge_data = graph.edges[start_node, neighbor]
                 next_conn_id = edge_data.get("connection_id")
@@ -566,16 +635,29 @@ class ItineraryGenerator:
 
         logger.info(f"Searching from {len(start_nodes)} potential starting points")
 
-        # Find all valid paths
+        # Reset early termination counter
+        self._paths_found = 0
+        dfs_start = time.time()
+
+        # Find valid paths with early termination
         all_paths = []
         for start_node in start_nodes:
+            # Stop searching if we've found enough paths
+            if self._paths_found >= self.MAX_PATHS_TO_EXPLORE:
+                logger.info(
+                    f"Early termination: found {self._paths_found} paths, "
+                    f"stopping search"
+                )
+                break
+
             paths = self._find_paths_dfs(
                 graph, start_node, options.num_days, set(), [],
                 max_overlap_km=options.max_overlap_km
             )
             all_paths.extend(paths)
 
-        logger.info(f"Found {len(all_paths)} valid paths")
+        dfs_time = time.time() - dfs_start
+        logger.info(f"Found {len(all_paths)} valid paths in {dfs_time:.2f}s")
 
         if not all_paths:
             return []
