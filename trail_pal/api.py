@@ -257,6 +257,27 @@ async def verify_api_key(x_api_key: str = Header(None, alias="X-API-Key")):
     return x_api_key
 
 
+async def optional_api_key(x_api_key: str = Header(None, alias="X-API-Key")):
+    """Optionally verify API key - allows unauthenticated access for web UI.
+    
+    If a key is provided, it must be valid. If no key is provided, access is allowed.
+    """
+    valid_keys = settings.api_keys_list
+
+    # If no keys configured or no key provided, allow access
+    if not valid_keys or not x_api_key:
+        return None
+
+    # If key provided, validate it
+    if x_api_key not in valid_keys:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid API key",
+        )
+
+    return x_api_key
+
+
 # --- FastAPI App ---
 
 app = FastAPI(
@@ -309,7 +330,7 @@ async def health_check():
 )
 async def list_regions(
     db: Session = Depends(get_db),
-    _api_key: str = Depends(verify_api_key),
+    _api_key: str = Depends(optional_api_key),
 ):
     """List all available hiking regions."""
     stmt = select(Region)
@@ -413,7 +434,7 @@ async def search_waypoints(
     q: str = Query(..., description="Search query (waypoint name)"),
     limit: int = Query(10, ge=1, le=50, description="Maximum results"),
     db: Session = Depends(get_db),
-    _api_key: str = Depends(verify_api_key),
+    _api_key: str = Depends(optional_api_key),
 ):
     """Search waypoints in a region by name (for autocomplete).
 
@@ -567,7 +588,7 @@ async def get_region_stats(
 async def generate_itineraries(
     request: GenerateRequest,
     db: Session = Depends(get_db),
-    _api_key: str = Depends(verify_api_key),
+    _api_key: str = Depends(optional_api_key),
 ):
     """Generate hiking itineraries for a region.
 
@@ -693,7 +714,7 @@ async def generate_itineraries(
 async def export_itinerary_gpx(
     request: ItineraryDataRequest,
     db: Session = Depends(get_db),
-    _api_key: str = Depends(verify_api_key),
+    _api_key: str = Depends(optional_api_key),
 ):
     """Export a previously generated itinerary as a GPX file.
     
@@ -988,7 +1009,7 @@ async def export_itinerary_gpx(
 async def get_itinerary_geometry(
     request: ItineraryDataRequest,
     db: Session = Depends(get_db),
-    _api_key: str = Depends(verify_api_key),
+    _api_key: str = Depends(optional_api_key),
 ):
     """Get route geometry for a previously generated itinerary as JSON.
     
