@@ -29,6 +29,9 @@ COPY . .
 # Install the package in editable mode
 RUN pip install -e .
 
+# Make start script executable
+RUN chmod +x start.sh
+
 # Change ownership to non-root user
 RUN chown -R appuser:appuser /app
 
@@ -38,7 +41,6 @@ USER appuser
 # Expose the API port (Railway uses dynamic PORT env var)
 EXPOSE 8000
 
-# Run the API with uvicorn using Railway's PORT environment variable
-# Railway sets PORT dynamically, defaulting to 8000 if not set
-CMD uvicorn trail_pal.api:app --host 0.0.0.0 --port ${PORT:-8000}
+# Run migrations and start the API server
+CMD ["./start.sh"]
 
