@@ -17,7 +17,11 @@ config = context.config
 
 # Override sqlalchemy.url with our settings
 settings = get_settings()
-config.set_main_option("sqlalchemy.url", settings.database_url)
+# Fix for Railway: convert postgres:// to postgresql:// (required by SQLAlchemy 2.0+)
+database_url = settings.database_url
+if database_url.startswith("postgres://"):
+    database_url = database_url.replace("postgres://", "postgresql://", 1)
+config.set_main_option("sqlalchemy.url", database_url)
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
