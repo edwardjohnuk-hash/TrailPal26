@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from trail_pal.config import get_settings
 from trail_pal.db.database import SessionLocal
-from trail_pal.db.models import Connection, Region, Waypoint, WaypointType
+from trail_pal.db.models import Connection, ConnectionOverlap, Region, Waypoint, WaypointType
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +109,7 @@ class ItineraryOptions:
     min_distance_km: float = 10.0
     max_distance_km: float = 20.0
     randomize: bool = False  # If True, randomly select routes instead of top-scored
+    max_overlap_km: float = 3.0  # Max allowed overlap between consecutive days
 
 
 class ItineraryGenerator:
@@ -125,6 +126,9 @@ class ItineraryGenerator:
         self._settings = get_settings()
         self._graph: Optional[nx.DiGraph] = None
         self._waypoints: dict[uuid.UUID, Waypoint] = {}
+        # Overlap lookup: (connection_a_id, connection_b_id) -> overlap_km
+        # Stores both orderings for O(1) lookup
+        self._overlaps: dict[tuple[uuid.UUID, uuid.UUID], float] = {}
 
     def _get_db(self) -> Session:
         """Get or create database session."""
@@ -213,33 +217,115 @@ class ItineraryGenerator:
             f"and {graph.number_of_edges()} edges"
         )
 
+        # Load pre-computed overlap data for fast filtering
+        self._load_overlaps(wp_ids)
+
         return graph
 
-    def _score_waypoint(self, waypoint: Waypoint, prefer_accommodation: bool) -> float:
+    def _load_overlaps(self, waypoint_ids: list[uuid.UUID]) -> None:
+        """Load pre-computed overlap data into memory for fast lookup.
+
+        Args:
+            waypoint_ids: List of waypoint IDs in the region.
+        """
+        db = self._get_db()
+
+        # Get all connection IDs for this region
+        conn_stmt = select(Connection.id).where(
+            Connection.from_waypoint_id.in_(waypoint_ids)
+        )
+        conn_ids = list(db.execute(conn_stmt).scalars().all())
+
+        if not conn_ids:
+            logger.info("No connections found, skipping overlap loading")
+            return
+
+        # Load overlaps for these connections
+        overlap_stmt = select(ConnectionOverlap).where(
+            ConnectionOverlap.connection_a_id.in_(conn_ids) |
+            ConnectionOverlap.connection_b_id.in_(conn_ids)
+        )
+        overlaps = list(db.execute(overlap_stmt).scalars().all())
+
+        # Build lookup dict with both orderings for O(1) access
+        self._overlaps.clear()
+        for overlap in overlaps:
+            self._overlaps[(overlap.connection_a_id, overlap.connection_b_id)] = overlap.overlap_km
+            self._overlaps[(overlap.connection_b_id, overlap.connection_a_id)] = overlap.overlap_km
+
+        logger.info(f"Loaded {len(overlaps)} overlap records into memory")
+
+    def _get_overlap(
+        self, connection_a_id: Optional[uuid.UUID], connection_b_id: Optional[uuid.UUID]
+    ) -> float:
+        """Get the overlap between two connections.
+
+        Args:
+            connection_a_id: First connection ID.
+            connection_b_id: Second connection ID.
+
+        Returns:
+            Overlap distance in km, or 0 if no overlap data exists.
+        """
+        if connection_a_id is None or connection_b_id is None:
+            return 0.0
+        return self._overlaps.get((connection_a_id, connection_b_id), 0.0)
+
+    def _is_transport_accessible(self, waypoint_type: str) -> bool:
+        """Check if a waypoint type is suitable for start/end positions.
+
+        Args:
+            waypoint_type: Waypoint type string.
+
+        Returns:
+            True if waypoint type is transport-accessible.
+        """
+        return waypoint_type in [
+            WaypointType.TRAIN_STATION,
+            WaypointType.VILLAGE,
+            WaypointType.TOWN,
+            WaypointType.CITY,
+        ]
+
+    def _score_waypoint(
+        self, waypoint: Waypoint, prefer_accommodation: bool, is_start_or_end: bool = False
+    ) -> float:
         """Calculate a quality score for a waypoint.
 
         Args:
             waypoint: Waypoint to score.
             prefer_accommodation: Whether to prioritize accommodation.
+            is_start_or_end: Whether this waypoint is used as start/end position.
 
         Returns:
             Score value (higher is better).
         """
         score = 0.0
 
-        # Accommodation types score higher as end points
-        if waypoint.waypoint_type == WaypointType.CAMPSITE:
-            score += 10
-        elif waypoint.waypoint_type == WaypointType.HOSTEL:
-            score += 15
-        elif waypoint.waypoint_type == WaypointType.GUEST_HOUSE:
-            score += 12
-        elif waypoint.waypoint_type == WaypointType.HOTEL:
-            score += 8  # Hotels less hiker-friendly typically
-        elif waypoint.waypoint_type == WaypointType.VIEWPOINT:
-            score += 5  # Good for scenic value but not for staying
-        elif waypoint.waypoint_type == WaypointType.PEAK:
-            score += 7  # Achievement value
+        # Transport-accessible types score higher for start/end positions
+        if is_start_or_end:
+            if waypoint.waypoint_type == WaypointType.TRAIN_STATION:
+                score += 20  # Highest priority for train stations
+            elif waypoint.waypoint_type == WaypointType.CITY:
+                score += 18
+            elif waypoint.waypoint_type == WaypointType.TOWN:
+                score += 16
+            elif waypoint.waypoint_type == WaypointType.VILLAGE:
+                score += 14
+        else:
+            # Accommodation types score higher as intermediate end points
+            if waypoint.waypoint_type == WaypointType.CAMPSITE:
+                score += 10
+            elif waypoint.waypoint_type == WaypointType.HOSTEL:
+                score += 15
+            elif waypoint.waypoint_type == WaypointType.GUEST_HOUSE:
+                score += 12
+            elif waypoint.waypoint_type == WaypointType.HOTEL:
+                score += 8  # Hotels less hiker-friendly typically
+            elif waypoint.waypoint_type == WaypointType.VIEWPOINT:
+                score += 5  # Good for scenic value but not for staying
+            elif waypoint.waypoint_type == WaypointType.PEAK:
+                score += 7  # Achievement value
 
         # Amenity bonuses
         if waypoint.has_accommodation and prefer_accommodation:
@@ -265,12 +351,42 @@ class ItineraryGenerator:
         """
         score = 0.0
 
+        if not days:
+            return score
+
         # Score waypoints
-        for day in days:
-            # End waypoints are more important (where you stay)
-            score += self._score_waypoint(day.end_waypoint, options.prefer_accommodation)
-            # Start waypoints matter too
-            score += self._score_waypoint(day.start_waypoint, options.prefer_accommodation) * 0.3
+        for i, day in enumerate(days):
+            is_first_day = i == 0
+            is_last_day = i == len(days) - 1
+
+            # First day start and last day end should be transport-accessible
+            if is_first_day:
+                score += self._score_waypoint(
+                    day.start_waypoint, options.prefer_accommodation, is_start_or_end=True
+                )
+            else:
+                score += self._score_waypoint(
+                    day.start_waypoint, options.prefer_accommodation, is_start_or_end=False
+                ) * 0.3
+
+            # Last day end should be transport-accessible
+            if is_last_day:
+                score += self._score_waypoint(
+                    day.end_waypoint, options.prefer_accommodation, is_start_or_end=True
+                )
+            else:
+                # Intermediate end waypoints are more important (where you stay)
+                score += self._score_waypoint(
+                    day.end_waypoint, options.prefer_accommodation, is_start_or_end=False
+                )
+
+        # Bonus points for transport-accessible start/end
+        first_waypoint = days[0].start_waypoint
+        last_waypoint = days[-1].end_waypoint
+        if self._is_transport_accessible(first_waypoint.waypoint_type):
+            score += 10  # Bonus for transport-accessible start
+        if self._is_transport_accessible(last_waypoint.waypoint_type):
+            score += 10  # Bonus for transport-accessible end
 
         # Variety bonus: different waypoint types
         types_seen = set()
@@ -300,6 +416,7 @@ class ItineraryGenerator:
         num_days: int,
         visited: set[uuid.UUID],
         current_path: list[tuple[uuid.UUID, uuid.UUID, dict]],
+        max_overlap_km: float = 3.0,
     ) -> list[list[tuple[uuid.UUID, uuid.UUID, dict]]]:
         """Find all valid paths using depth-first search.
 
@@ -309,6 +426,7 @@ class ItineraryGenerator:
             num_days: Remaining days to fill.
             visited: Set of visited nodes.
             current_path: Current path being built.
+            max_overlap_km: Maximum allowed overlap with previous day's route.
 
         Returns:
             List of valid complete paths.
@@ -322,10 +440,20 @@ class ItineraryGenerator:
         for neighbor in graph.neighbors(start_node):
             if neighbor not in visited:
                 edge_data = graph.edges[start_node, neighbor]
+                next_conn_id = edge_data.get("connection_id")
+
+                # Check overlap with previous day's route
+                if current_path:
+                    prev_conn_id = current_path[-1][2].get("connection_id")
+                    overlap = self._get_overlap(prev_conn_id, next_conn_id)
+                    if overlap > max_overlap_km:
+                        # Skip this edge - too much backtracking
+                        continue
+
                 current_path.append((start_node, neighbor, edge_data))
 
                 sub_paths = self._find_paths_dfs(
-                    graph, neighbor, num_days - 1, visited, current_path
+                    graph, neighbor, num_days - 1, visited, current_path, max_overlap_km
                 )
                 paths.extend(sub_paths)
 
@@ -347,20 +475,32 @@ class ItineraryGenerator:
             Waypoint ID or None if not found.
         """
         if options.start_waypoint_id:
-            if options.start_waypoint_id in graph.nodes:
-                return options.start_waypoint_id
-            raise ValueError(
-                f"Start waypoint {options.start_waypoint_id} not in graph"
-            )
+            if options.start_waypoint_id not in graph.nodes:
+                raise ValueError(
+                    f"Start waypoint {options.start_waypoint_id} not in graph"
+                )
+            # Validate it's transport-accessible
+            node_data = graph.nodes[options.start_waypoint_id]
+            waypoint_type = node_data.get("waypoint_type")
+            if waypoint_type and not self._is_transport_accessible(waypoint_type):
+                raise ValueError(
+                    f"Start waypoint must be transport-accessible "
+                    f"(train station, village, town, or city), "
+                    f"got: {waypoint_type}"
+                )
+            return options.start_waypoint_id
 
         if options.start_waypoint_name:
             name_lower = options.start_waypoint_name.lower()
             for node_id in graph.nodes:
                 node_data = graph.nodes[node_id]
                 if name_lower in node_data.get("name", "").lower():
-                    return node_id
+                    # Validate it's transport-accessible
+                    waypoint_type = node_data.get("waypoint_type")
+                    if waypoint_type and self._is_transport_accessible(waypoint_type):
+                        return node_id
             raise ValueError(
-                f"No waypoint found matching name: {options.start_waypoint_name}"
+                f"No transport-accessible waypoint found matching name: {options.start_waypoint_name}"
             )
 
         return None
@@ -387,23 +527,38 @@ class ItineraryGenerator:
         # Load graph
         graph = self._load_graph(region_name)
 
-        # Find starting points
+        # Find starting points (must be transport-accessible)
         start_nodes = []
         specified_start = self._find_start_waypoint(graph, options)
 
         if specified_start:
             start_nodes = [specified_start]
         else:
-            # Use waypoints with accommodation as potential starts
+            # Use transport-accessible waypoints as potential starts
             for node_id in graph.nodes:
-                if graph.nodes[node_id].get("has_accommodation"):
+                node_data = graph.nodes[node_id]
+                waypoint_type = node_data.get("waypoint_type")
+                if waypoint_type and self._is_transport_accessible(waypoint_type):
                     start_nodes.append(node_id)
 
-            # If no accommodation waypoints, use all with sufficient connections
+            # If no transport-accessible waypoints, log warning
             if not start_nodes:
-                for node_id in graph.nodes:
-                    if graph.out_degree(node_id) >= options.num_days:
-                        start_nodes.append(node_id)
+                logger.warning(
+                    "No transport-accessible waypoints found. "
+                    "Ensure waypoints are seeded with train stations, villages, towns, or cities."
+                )
+            else:
+                # Limit to a reasonable number of starting points for performance
+                # When no specific start is provided, randomly sample up to 20 starting points
+                # This prevents exponential search time when there are many transport-accessible waypoints
+                max_start_nodes = 20
+                if len(start_nodes) > max_start_nodes:
+                    total_start_nodes = len(start_nodes)
+                    start_nodes = random.sample(start_nodes, max_start_nodes)
+                    logger.info(
+                        f"Limited to {max_start_nodes} random starting points "
+                        f"(out of {total_start_nodes} total) for performance"
+                    )
 
         if not start_nodes:
             logger.warning("No suitable starting points found")
@@ -415,7 +570,8 @@ class ItineraryGenerator:
         all_paths = []
         for start_node in start_nodes:
             paths = self._find_paths_dfs(
-                graph, start_node, options.num_days, set(), []
+                graph, start_node, options.num_days, set(), [],
+                max_overlap_km=options.max_overlap_km
             )
             all_paths.extend(paths)
 
@@ -424,9 +580,32 @@ class ItineraryGenerator:
         if not all_paths:
             return []
 
+        # Filter paths to ensure end waypoint is transport-accessible
+        filtered_paths = []
+        for path in all_paths:
+            if not path:
+                continue
+            # Get the final waypoint (last day's end)
+            last_edge = path[-1]
+            final_waypoint_id = last_edge[1]  # to_id of last edge
+            final_waypoint = self._waypoints[final_waypoint_id]
+            if self._is_transport_accessible(final_waypoint.waypoint_type):
+                filtered_paths.append(path)
+
+        logger.info(
+            f"Filtered to {len(filtered_paths)} paths with transport-accessible end waypoints"
+        )
+
+        if not filtered_paths:
+            logger.warning(
+                "No paths found ending at transport-accessible waypoints. "
+                "Ensure connections exist from accommodations to transport waypoints."
+            )
+            return []
+
         # Convert paths to itineraries
         itineraries = []
-        for path in all_paths:
+        for path in filtered_paths:
             days = []
             for i, (from_id, to_id, edge_data) in enumerate(path):
                 # Parse surface stats from edge data if available
@@ -578,4 +757,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

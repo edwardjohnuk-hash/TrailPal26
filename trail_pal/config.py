@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     # Overpass API (OpenStreetMap)
     overpass_api_url: str = "https://overpass-api.de/api/interpreter"
 
+    # Google Places API
+    google_places_api_key: str = ""
+    google_places_requests_per_minute: int = 50
+
     # Hiking constraints
     min_daily_distance_km: float = 10.0
     max_daily_distance_km: float = 20.0

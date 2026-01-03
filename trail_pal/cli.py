@@ -17,6 +17,7 @@ from trail_pal.algorithm.itinerary_generator import (
 )
 from trail_pal.db.database import init_db
 from trail_pal.services.graph_builder import GraphBuilder
+from trail_pal.services.overlap_analyzer import OverlapAnalyzer
 from trail_pal.services.waypoint_seeder import WaypointSeeder, list_available_regions
 
 # Configure logging
@@ -163,6 +164,87 @@ def graph_stats(region: str):
         click.echo(f"  Feasible connections: {stats['feasible_connections']}")
         click.echo(f"  Average distance: {stats['avg_distance_km']} km")
         click.echo(f"  Average duration: {stats['avg_duration_min']} min")
+
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@cli.command("build-overlaps")
+@click.option(
+    "--region",
+    "-r",
+    required=True,
+    help="Region to build overlaps for",
+)
+@click.option(
+    "--keep-existing",
+    is_flag=True,
+    help="Keep existing overlap data (default: clear and rebuild)",
+)
+def build_overlaps(region: str, keep_existing: bool):
+    """Build route overlap data for itinerary filtering.
+    
+    Pre-computes geometric overlaps between connection pairs that share
+    a waypoint. This data is used during itinerary generation to filter
+    out routes with excessive backtracking (>3km overlap).
+    """
+    click.echo(f"Building route overlaps for region: {region}")
+    if keep_existing:
+        click.echo("(Keeping existing overlap data)")
+
+    def progress_callback(current: int, total: int, waypoint_name: str):
+        click.echo(f"  [{current}/{total}] Processing waypoint: {waypoint_name}")
+
+    try:
+        analyzer = OverlapAnalyzer()
+        stats = analyzer.build_overlaps(
+            region,
+            clear_existing=not keep_existing,
+            progress_callback=progress_callback,
+        )
+        analyzer.close()
+
+        click.echo("\nOverlap analysis complete!")
+        click.echo(f"  Region: {stats['region']}")
+        click.echo(f"  Waypoints processed: {stats['waypoints_processed']}")
+        click.echo(f"  Connection pairs analyzed: {stats['pairs_analyzed']}")
+        click.echo(f"  Overlaps stored: {stats['overlaps_stored']}")
+        click.echo(f"  Significant overlaps (>0km): {stats['overlaps_with_significant_data']}")
+
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"Error building overlaps: {e}", err=True)
+        logger.exception("Overlap analysis failed")
+        sys.exit(1)
+
+
+@cli.command("overlap-stats")
+@click.option(
+    "--region",
+    "-r",
+    required=True,
+    help="Region to get overlap stats for",
+)
+def overlap_stats(region: str):
+    """Show statistics about route overlap data."""
+    try:
+        analyzer = OverlapAnalyzer()
+        stats = analyzer.get_overlap_stats(region)
+        analyzer.close()
+
+        if stats is None:
+            click.echo(f"Region not found: {region}", err=True)
+            sys.exit(1)
+
+        click.echo(f"Overlap statistics for {region}:")
+        click.echo(f"  Total overlap records: {stats['total_overlaps']}")
+        click.echo(f"  Overlaps > 1km: {stats['overlaps_above_1km']}")
+        click.echo(f"  Overlaps > 3km: {stats['overlaps_above_3km']}")
+        click.echo(f"  Maximum overlap: {stats['max_overlap_km']} km")
+        click.echo(f"  Average overlap: {stats['avg_overlap_km']} km")
 
     except Exception as e:
         click.echo(f"Error: {e}", err=True)

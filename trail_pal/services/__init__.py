@@ -22,6 +22,13 @@ from trail_pal.services.graph_builder import (
     GraphBuilder,
     build_graph,
 )
+from trail_pal.services.google_places_client import (
+    GooglePlacesClient,
+    PlaceResult,
+)
+from trail_pal.services.pub_finder import (
+    PubFinder,
+)
 
 __all__ = [
     # OSM Client
@@ -42,5 +49,10 @@ __all__ = [
     # Graph Builder
     "GraphBuilder",
     "build_graph",
+    # Google Places Client
+    "GooglePlacesClient",
+    "PlaceResult",
+    # Pub Finder
+    "PubFinder",
 ]
 

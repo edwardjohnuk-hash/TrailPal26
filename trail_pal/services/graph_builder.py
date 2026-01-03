@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from trail_pal.config import get_settings
 from trail_pal.db.database import SessionLocal
-from trail_pal.db.models import Connection, Region, Waypoint
+from trail_pal.db.models import Connection, Region, Waypoint, WaypointType
 from trail_pal.services.ors_client import (
     OpenRouteServiceClient,
     RouteResult,
@@ -72,6 +72,7 @@ class GraphBuilder:
         Args:
             region_id: ID of the region.
             accommodation_only: If True, only return waypoints with accommodation.
+                              If False, returns all waypoints including transport-accessible ones.
 
         Returns:
             List of waypoints.
@@ -83,6 +84,27 @@ class GraphBuilder:
             # Only get waypoints that can serve as overnight stops
             stmt = stmt.where(Waypoint.has_accommodation == True)  # noqa: E712
         
+        return list(db.execute(stmt).scalars().all())
+
+    def get_transport_waypoints(self, region_id: uuid.UUID) -> list[Waypoint]:
+        """Get transport-accessible waypoints for a region.
+
+        Args:
+            region_id: ID of the region.
+
+        Returns:
+            List of transport-accessible waypoints.
+        """
+        db = self._get_db()
+        stmt = select(Waypoint).where(
+            Waypoint.region_id == region_id,
+            Waypoint.waypoint_type.in_([
+                WaypointType.TRAIN_STATION,
+                WaypointType.VILLAGE,
+                WaypointType.TOWN,
+                WaypointType.CITY,
+            ])
+        )
         return list(db.execute(stmt).scalars().all())
 
     def get_candidate_pairs(
@@ -160,10 +182,17 @@ class GraphBuilder:
 
         # Convert geometry to LineString
         route_geometry = None
-        if route.geometry:
-            route_geometry = from_shape(
-                LineString(route.geometry), srid=4326
-            )
+        if route.geometry and len(route.geometry) >= 2:
+            try:
+                route_geometry = from_shape(
+                    LineString(route.geometry), srid=4326
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to create LineString from route geometry: {e}. "
+                    f"Route from {from_wp.name} to {to_wp.name} will be saved without geometry."
+                )
+                route_geometry = None
 
         return Connection(
             id=uuid.uuid4(),
@@ -204,14 +233,57 @@ class GraphBuilder:
         if not region:
             raise ValueError(f"Region not found: {region_name}")
 
-        waypoints = self.get_region_waypoints(region.id)
-        if not waypoints:
+        # Get accommodation waypoints (for intermediate stops)
+        accommodation_waypoints = self.get_region_waypoints(region.id, accommodation_only=True)
+        # Get transport waypoints (for start/end positions)
+        transport_waypoints = self.get_transport_waypoints(region.id)
+        
+        # Combine all waypoints for building connections
+        all_waypoints = accommodation_waypoints + transport_waypoints
+        
+        if not all_waypoints:
             raise ValueError(f"No waypoints found for region: {region_name}")
 
-        logger.info(f"Found {len(waypoints)} waypoints in {region_name}")
+        logger.info(
+            f"Found {len(accommodation_waypoints)} accommodation waypoints "
+            f"and {len(transport_waypoints)} transport waypoints in {region_name}"
+        )
 
         # Get candidate pairs
-        candidates = self.get_candidate_pairs(waypoints)
+        # We want connections:
+        # - Transport -> Accommodation (start hike)
+        # - Accommodation -> Accommodation (intermediate days)
+        # - Accommodation -> Transport (end hike)
+        candidates = []
+        
+        # Transport to Accommodation
+        for transport_wp in transport_waypoints:
+            for accommodation_wp in accommodation_waypoints:
+                distance = calculate_straight_line_distance_km(
+                    transport_wp.longitude, transport_wp.latitude,
+                    accommodation_wp.longitude, accommodation_wp.latitude
+                )
+                if distance <= self._settings.max_straight_line_distance_km:
+                    candidates.append((transport_wp, accommodation_wp, distance))
+        
+        # Accommodation to Accommodation
+        for wp1, wp2, distance in self.get_candidate_pairs(accommodation_waypoints):
+            candidates.append((wp1, wp2, distance))
+        
+        # Accommodation to Transport
+        for accommodation_wp in accommodation_waypoints:
+            for transport_wp in transport_waypoints:
+                distance = calculate_straight_line_distance_km(
+                    accommodation_wp.longitude, accommodation_wp.latitude,
+                    transport_wp.longitude, transport_wp.latitude
+                )
+                if distance <= self._settings.max_straight_line_distance_km:
+                    candidates.append((accommodation_wp, transport_wp, distance))
+        
+        logger.info(
+            f"Found {len(candidates)} candidate pairs "
+            f"(including transport connections)"
+        )
 
         # Filter out existing connections if requested
         if skip_existing:
@@ -228,7 +300,7 @@ class GraphBuilder:
         if not candidates:
             return {
                 "region": region_name,
-                "total_waypoints": len(waypoints),
+                "total_waypoints": len(all_waypoints),
                 "total_candidates": 0,
                 "connections_created": 0,
                 "feasible_connections": 0,
@@ -282,7 +354,7 @@ class GraphBuilder:
 
         stats = {
             "region": region_name,
-            "total_waypoints": len(waypoints),
+            "total_waypoints": len(all_waypoints),
             "total_candidates": len(candidates),
             "connections_created": connections_created,
             "feasible_connections": feasible_count,

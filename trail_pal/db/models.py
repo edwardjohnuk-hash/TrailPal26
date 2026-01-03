@@ -66,6 +66,9 @@ class WaypointType:
     VIEWPOINT = "viewpoint"
     PEAK = "peak"
     VILLAGE = "village"
+    TRAIN_STATION = "train_station"
+    TOWN = "town"
+    CITY = "city"
 
 
 class Waypoint(Base):
@@ -196,4 +199,105 @@ class Connection(Base):
             f"<Connection(from='{self.from_waypoint_id}', "
             f"to='{self.to_waypoint_id}', distance={self.distance_km}km)>"
         )
+
+
+class ConnectionOverlap(Base):
+    """Pre-computed overlap between two connections that share a waypoint.
+    
+    Used to quickly filter out itineraries where consecutive days
+    share significant trail geometry (backtracking).
+    """
+
+    __tablename__ = "connection_overlaps"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    connection_a_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("connections.id", ondelete="CASCADE"), nullable=False
+    )
+    connection_b_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("connections.id", ondelete="CASCADE"), nullable=False
+    )
+    shared_waypoint_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("waypoints.id", ondelete="CASCADE"), nullable=False
+    )
+    
+    # The length of overlapping geometry in kilometers
+    overlap_km: Mapped[float] = mapped_column(Float, nullable=False)
+    
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+
+    # Relationships
+    connection_a: Mapped["Connection"] = relationship(
+        "Connection", foreign_keys=[connection_a_id]
+    )
+    connection_b: Mapped["Connection"] = relationship(
+        "Connection", foreign_keys=[connection_b_id]
+    )
+    shared_waypoint: Mapped["Waypoint"] = relationship(
+        "Waypoint", foreign_keys=[shared_waypoint_id]
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "connection_a_id", "connection_b_id", name="uq_connection_overlap_pair"
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<ConnectionOverlap(a={self.connection_a_id}, "
+            f"b={self.connection_b_id}, overlap={self.overlap_km:.2f}km)>"
+        )
+
+
+class Pub(Base):
+    """A pub found near a waypoint or route segment."""
+
+    __tablename__ = "pubs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    waypoint_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("waypoints.id", ondelete="CASCADE"), nullable=True
+    )
+    connection_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("connections.id", ondelete="CASCADE"), nullable=True
+    )
+
+    # Google Places data
+    google_place_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # Location as a point geometry (EPSG:4326 = WGS84)
+    location = mapped_column(Geometry("POINT", srid=4326), nullable=False)
+
+    # Latitude and longitude stored separately for easy access
+    latitude: Mapped[float] = mapped_column(Float, nullable=False)
+    longitude: Mapped[float] = mapped_column(Float, nullable=False)
+
+    # Rating and metadata
+    rating: Mapped[float] = mapped_column(Float, nullable=False)
+    user_ratings_total: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    distance_m: Mapped[float] = mapped_column(Float, nullable=False)
+    location_type: Mapped[str] = mapped_column(String(50), nullable=False)  # 'waypoint' or 'route'
+    pub_metadata: Mapped[Optional[dict]] = mapped_column("metadata", JSONB, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    # Relationships
+    waypoint: Mapped[Optional["Waypoint"]] = relationship("Waypoint", foreign_keys=[waypoint_id])
+    connection: Mapped[Optional["Connection"]] = relationship("Connection", foreign_keys=[connection_id])
+
+    def __repr__(self) -> str:
+        return f"<Pub(name='{self.name}', rating={self.rating}, distance={self.distance_m}m)>"
 

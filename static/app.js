@@ -1,0 +1,688 @@
+// State
+let currentItinerary = null;
+let currentRequestParams = null;
+let map = null;
+let routeLayers = [];
+
+// DOM elements
+const form = document.getElementById('itinerary-form');
+const regionSelect = document.getElementById('region');
+const daysInput = document.getElementById('days');
+const startWaypointInput = document.getElementById('start-waypoint');
+const waypointSuggestions = document.getElementById('waypoint-suggestions');
+const preferAccommodationCheckbox = document.getElementById('prefer-accommodation');
+const generateBtn = document.getElementById('generate-btn');
+const loadingDiv = document.getElementById('loading');
+const errorDiv = document.getElementById('error');
+const resultsSection = document.getElementById('results-section');
+const itinerarySummary = document.getElementById('itinerary-summary');
+const daysList = document.getElementById('days-list');
+const downloadGpxBtn = document.getElementById('download-gpx-btn');
+const viewMapBtn = document.getElementById('view-map-btn');
+const generateNewBtn = document.getElementById('generate-new-btn');
+const mapSection = document.getElementById('map-section');
+const mapContainer = document.getElementById('map');
+const closeMapBtn = document.getElementById('close-map-btn');
+
+// Autocomplete state
+let autocompleteTimeout = null;
+let selectedWaypoint = null;
+let currentSuggestions = [];
+
+// Initialize
+document.addEventListener('DOMContentLoaded', () => {
+    loadRegions();
+    form.addEventListener('submit', handleFormSubmit);
+    downloadGpxBtn.addEventListener('click', handleDownloadGpx);
+    
+    // Check if view map button exists before adding listener
+    if (viewMapBtn) {
+        viewMapBtn.addEventListener('click', handleViewMap);
+        console.log('View Map button event listener attached');
+    } else {
+        console.error('View Map button not found in DOM');
+    }
+    
+    if (closeMapBtn) {
+        closeMapBtn.addEventListener('click', handleCloseMap);
+    }
+    
+    generateNewBtn.addEventListener('click', handleGenerateNew);
+    
+    // Setup autocomplete for waypoint input
+    setupWaypointAutocomplete();
+    
+    // Close suggestions when clicking outside
+    document.addEventListener('click', (e) => {
+        const autocompleteContainer = startWaypointInput.closest('.autocomplete-container');
+        if (autocompleteContainer && !autocompleteContainer.contains(e.target)) {
+            hideSuggestions();
+        }
+    });
+});
+
+// Load available regions
+async function loadRegions() {
+    try {
+        const response = await fetch('/regions');
+        if (!response.ok) {
+            throw new Error('Failed to load regions');
+        }
+        const regions = await response.json();
+        
+        regionSelect.innerHTML = '<option value="">Select a region...</option>';
+        regions.forEach(region => {
+            const option = document.createElement('option');
+            option.value = region.name;
+            option.textContent = `${region.name} (${region.country})`;
+            regionSelect.appendChild(option);
+        });
+    } catch (error) {
+        console.error('Error loading regions:', error);
+        regionSelect.innerHTML = '<option value="">Error loading regions</option>';
+    }
+}
+
+// Setup waypoint autocomplete
+function setupWaypointAutocomplete() {
+    startWaypointInput.addEventListener('input', handleWaypointInput);
+    startWaypointInput.addEventListener('keydown', handleWaypointKeydown);
+    startWaypointInput.addEventListener('focus', () => {
+        if (startWaypointInput.value.trim() && currentSuggestions.length > 0) {
+            showSuggestions(currentSuggestions);
+        }
+    });
+}
+
+// Handle waypoint input with debouncing
+function handleWaypointInput(e) {
+    const query = e.target.value.trim();
+    
+    // Clear previous timeout
+    if (autocompleteTimeout) {
+        clearTimeout(autocompleteTimeout);
+    }
+    
+    // Reset selection when user types
+    selectedWaypoint = null;
+    
+    if (!query) {
+        hideSuggestions();
+        return;
+    }
+    
+    // Get current region
+    const region = regionSelect.value;
+    if (!region) {
+        hideSuggestions();
+        return;
+    }
+    
+    // Debounce the search
+    autocompleteTimeout = setTimeout(() => {
+        searchWaypoints(region, query);
+    }, 300);
+}
+
+// Handle keyboard navigation in autocomplete
+function handleWaypointKeydown(e) {
+    const suggestions = waypointSuggestions.querySelectorAll('.autocomplete-suggestion');
+    const selected = waypointSuggestions.querySelector('.autocomplete-suggestion.selected');
+    let selectedIndex = -1;
+    
+    if (selected) {
+        selectedIndex = Array.from(suggestions).indexOf(selected);
+    }
+    
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (selectedIndex < suggestions.length - 1) {
+            if (selected) selected.classList.remove('selected');
+            suggestions[selectedIndex + 1].classList.add('selected');
+            suggestions[selectedIndex + 1].scrollIntoView({ block: 'nearest' });
+        } else if (suggestions.length > 0) {
+            suggestions[0].classList.add('selected');
+        }
+    } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (selectedIndex > 0) {
+            if (selected) selected.classList.remove('selected');
+            suggestions[selectedIndex - 1].classList.add('selected');
+            suggestions[selectedIndex - 1].scrollIntoView({ block: 'nearest' });
+        } else if (selected) {
+            selected.classList.remove('selected');
+        }
+    } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (selected) {
+            selectWaypoint(selected);
+        } else if (suggestions.length > 0) {
+            selectWaypoint(suggestions[0]);
+        }
+    } else if (e.key === 'Escape') {
+        hideSuggestions();
+    }
+}
+
+// Search waypoints
+async function searchWaypoints(region, query) {
+    try {
+        const response = await fetch(`/regions/${region}/waypoints/search?q=${encodeURIComponent(query)}&limit=10`);
+        if (!response.ok) {
+            throw new Error('Failed to search waypoints');
+        }
+        const waypoints = await response.json();
+        currentSuggestions = waypoints;
+        showSuggestions(waypoints);
+    } catch (error) {
+        console.error('Error searching waypoints:', error);
+        hideSuggestions();
+    }
+}
+
+// Show suggestions
+function showSuggestions(waypoints) {
+    if (waypoints.length === 0) {
+        hideSuggestions();
+        return;
+    }
+    
+    waypointSuggestions.innerHTML = '';
+    waypoints.forEach(waypoint => {
+        const suggestion = document.createElement('div');
+        suggestion.className = 'autocomplete-suggestion';
+        suggestion.innerHTML = `
+            <div class="autocomplete-suggestion-name">${escapeHtml(waypoint.name)}</div>
+            <div class="autocomplete-suggestion-type">${escapeHtml(waypoint.waypoint_type.replace(/_/g, ' '))}</div>
+        `;
+        suggestion.addEventListener('click', () => selectWaypoint(suggestion, waypoint));
+        suggestion.addEventListener('mouseenter', () => {
+            waypointSuggestions.querySelectorAll('.autocomplete-suggestion').forEach(s => s.classList.remove('selected'));
+            suggestion.classList.add('selected');
+        });
+        waypointSuggestions.appendChild(suggestion);
+    });
+    
+    waypointSuggestions.classList.add('show');
+}
+
+// Hide suggestions
+function hideSuggestions() {
+    waypointSuggestions.classList.remove('show');
+    waypointSuggestions.innerHTML = '';
+}
+
+// Select a waypoint
+function selectWaypoint(suggestionElement, waypoint = null) {
+    if (!waypoint) {
+        // Extract waypoint from current suggestions
+        const index = Array.from(waypointSuggestions.querySelectorAll('.autocomplete-suggestion')).indexOf(suggestionElement);
+        waypoint = currentSuggestions[index];
+    }
+    
+    if (waypoint) {
+        selectedWaypoint = waypoint;
+        startWaypointInput.value = waypoint.name;
+        // Set days to 3 when a waypoint is selected (for 3-day itinerary)
+        daysInput.value = 3;
+        hideSuggestions();
+    }
+}
+
+// Escape HTML to prevent XSS
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Handle form submission
+async function handleFormSubmit(e) {
+    e.preventDefault();
+    
+    const region = regionSelect.value;
+    const days = parseInt(daysInput.value);
+    // Use selected waypoint name if available, otherwise use input value
+    const startWaypoint = selectedWaypoint ? selectedWaypoint.name : (startWaypointInput.value.trim() || null);
+    const preferAccommodation = preferAccommodationCheckbox.checked;
+    
+    // Store request params for GPX download
+    currentRequestParams = {
+        region,
+        days,
+        start_waypoint_name: startWaypoint,
+        prefer_accommodation: preferAccommodation,
+        max_results: 1,
+        randomize: true
+    };
+    
+    // Show loading, hide errors and results
+    loadingDiv.style.display = 'block';
+    errorDiv.style.display = 'none';
+    resultsSection.style.display = 'none';
+    generateBtn.disabled = true;
+    
+    try {
+        const response = await fetch('/itineraries/generate', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(currentRequestParams)
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to generate itinerary');
+        }
+        
+        const data = await response.json();
+        
+        if (data.count === 0 || !data.itineraries || data.itineraries.length === 0) {
+            throw new Error('No itineraries found');
+        }
+        
+        currentItinerary = data.itineraries[0];
+        displayItinerary(currentItinerary);
+        
+    } catch (error) {
+        console.error('Error generating itinerary:', error);
+        errorDiv.textContent = `Error: ${error.message}`;
+        errorDiv.style.display = 'block';
+    } finally {
+        loadingDiv.style.display = 'none';
+        generateBtn.disabled = false;
+    }
+}
+
+// Display itinerary
+function displayItinerary(itinerary) {
+    // Display summary
+    const totalHours = Math.floor(itinerary.total_duration_minutes / 60);
+    const totalMinutes = itinerary.total_duration_minutes % 60;
+    
+    itinerarySummary.innerHTML = `
+        <div class="summary-item"><strong>Region:</strong> ${itinerary.region}</div>
+        <div class="summary-item"><strong>Total Distance:</strong> ${itinerary.total_distance_km.toFixed(1)} km</div>
+        <div class="summary-item"><strong>Total Duration:</strong> ${totalHours}h ${totalMinutes}min</div>
+        <div class="summary-item"><strong>Total Elevation Gain:</strong> ${itinerary.total_elevation_gain_m.toFixed(0)}m</div>
+    `;
+    
+    // Display days
+    daysList.innerHTML = '';
+    itinerary.days.forEach(day => {
+        const dayCard = document.createElement('div');
+        dayCard.className = 'day-card';
+        
+        const durationHours = Math.floor(day.duration_minutes / 60);
+        const durationMinutes = day.duration_minutes % 60;
+        
+        let surfaceHtml = '';
+        if (day.surface_stats && day.surface_stats.total_distance_km > 0) {
+            const surfaces = day.surface_stats.surfaces;
+            const waytypes = day.surface_stats.waytypes;
+            
+            // Get top surface types
+            const surfaceEntries = Object.entries(surfaces)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 3);
+            
+            // Get top way types
+            const waytypeEntries = Object.entries(waytypes)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 3);
+            
+            surfaceHtml = '<div class="surface-stats">';
+            
+            if (surfaceEntries.length > 0) {
+                surfaceHtml += '<h4>Surface Types:</h4>';
+                surfaceEntries.forEach(([type, distance]) => {
+                    const percentage = (distance / day.surface_stats.total_distance_km) * 100;
+                    const typeDisplay = type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                    surfaceHtml += `<div class="surface-item">${typeDisplay}: ${percentage.toFixed(1)}% (${distance.toFixed(1)} km)</div>`;
+                });
+            }
+            
+            if (waytypeEntries.length > 0) {
+                surfaceHtml += '<h4>Way Types:</h4>';
+                waytypeEntries.forEach(([type, distance]) => {
+                    const percentage = (distance / day.surface_stats.total_distance_km) * 100;
+                    const typeDisplay = type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                    surfaceHtml += `<div class="surface-item">${typeDisplay}: ${percentage.toFixed(1)}% (${distance.toFixed(1)} km)</div>`;
+                });
+            }
+            
+            surfaceHtml += '</div>';
+        } else {
+            surfaceHtml = '<div class="surface-stats"><div class="surface-item">Surface data not available</div></div>';
+        }
+        
+        dayCard.innerHTML = `
+            <h3>Day ${day.day_number}</h3>
+            <div class="day-info">
+                <div class="day-info-item">
+                    <strong>Start:</strong>
+                    ${day.start.name} (${day.start.waypoint_type})
+                </div>
+                <div class="day-info-item">
+                    <strong>End:</strong>
+                    ${day.end.name} (${day.end.waypoint_type})
+                </div>
+                <div class="day-info-item">
+                    <strong>Distance:</strong>
+                    ${day.distance_km.toFixed(1)} km
+                </div>
+                <div class="day-info-item">
+                    <strong>Duration:</strong>
+                    ${durationHours}h ${durationMinutes}min
+                </div>
+                ${day.elevation_gain_m ? `
+                <div class="day-info-item">
+                    <strong>Elevation:</strong>
+                    +${day.elevation_gain_m.toFixed(0)}m / -${(day.elevation_loss_m || 0).toFixed(0)}m
+                </div>
+                ` : ''}
+            </div>
+            ${surfaceHtml}
+        `;
+        
+        daysList.appendChild(dayCard);
+    });
+    
+    // Show results
+    resultsSection.style.display = 'block';
+}
+
+// Handle GPX download
+async function handleDownloadGpx() {
+    if (!currentItinerary) {
+        alert('No itinerary to download. Please generate an itinerary first.');
+        return;
+    }
+    
+    downloadGpxBtn.disabled = true;
+    downloadGpxBtn.textContent = 'Downloading...';
+    
+    // Build request with itinerary data to ensure consistent results
+    const exportRequest = {
+        region: currentItinerary.region,
+        itinerary_id: currentItinerary.id,
+        days: currentItinerary.days.map(day => ({
+            day_number: day.day_number,
+            start_id: day.start.id,
+            end_id: day.end.id
+        }))
+    };
+    
+    try {
+        const response = await fetch('/itineraries/export', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(exportRequest)
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to download GPX');
+        }
+        
+        // Get filename from Content-Disposition header or use default
+        const contentDisposition = response.headers.get('Content-Disposition');
+        let filename = `${currentItinerary.region}_itinerary_${currentItinerary.days.length}days.gpx`;
+        if (contentDisposition) {
+            const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/);
+            if (filenameMatch) {
+                filename = filenameMatch[1];
+            }
+        }
+        
+        // Download file
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+        
+    } catch (error) {
+        console.error('Error downloading GPX:', error);
+        alert(`Error downloading GPX: ${error.message}`);
+    } finally {
+        downloadGpxBtn.disabled = false;
+        downloadGpxBtn.textContent = 'Download GPX';
+    }
+}
+
+// Handle view map
+async function handleViewMap() {
+    console.log('View Map button clicked');
+    
+    if (!currentItinerary) {
+        alert('No itinerary to display. Please generate an itinerary first.');
+        return;
+    }
+    
+    viewMapBtn.disabled = true;
+    viewMapBtn.textContent = 'Loading map...';
+    
+    // Build request with itinerary data to ensure consistent results
+    const geometryRequest = {
+        region: currentItinerary.region,
+        itinerary_id: currentItinerary.id,
+        days: currentItinerary.days.map(day => ({
+            day_number: day.day_number,
+            start_id: day.start.id,
+            end_id: day.end.id
+        }))
+    };
+    
+    try {
+        console.log('Fetching route geometry...', geometryRequest);
+        // Fetch route geometry
+        const response = await fetch('/itineraries/geometry', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(geometryRequest)
+        });
+        
+        console.log('Response status:', response.status);
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to load route geometry');
+        }
+        
+        const geometryData = await response.json();
+        console.log('Geometry data received:', geometryData);
+        displayMap(geometryData);
+        
+    } catch (error) {
+        console.error('Error loading map:', error);
+        alert(`Error loading map: ${error.message}`);
+    } finally {
+        viewMapBtn.disabled = false;
+        viewMapBtn.textContent = 'View Map';
+    }
+}
+
+// Display map with route
+function displayMap(geometryData) {
+    console.log('Displaying map with geometry data:', geometryData);
+    
+    // Show map section first
+    mapSection.style.display = 'block';
+    
+    // Use requestAnimationFrame to ensure DOM is updated before initializing map
+    requestAnimationFrame(() => {
+        // Initialize map if not already created
+        if (!map) {
+            console.log('Initializing new map...');
+            try {
+                map = L.map('map');
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '© OpenStreetMap contributors',
+                    maxZoom: 19
+                }).addTo(map);
+                console.log('Map initialized successfully');
+            } catch (error) {
+                console.error('Error initializing map:', error);
+                alert('Error initializing map. Please check the browser console.');
+                return;
+            }
+        }
+        
+        // Invalidate size after a short delay to ensure container is visible
+        setTimeout(() => {
+            if (map) {
+                map.invalidateSize();
+                console.log('Map size invalidated');
+                drawRouteOnMap(geometryData);
+            }
+        }, 200);
+    });
+}
+
+// Draw route on the map
+function drawRouteOnMap(geometryData) {
+    if (!map) {
+        console.error('Map not initialized');
+        return;
+    }
+    
+    // Clear existing route layers
+    routeLayers.forEach(layer => {
+        map.removeLayer(layer);
+    });
+    routeLayers = [];
+    
+    // Colors for different days
+    const dayColors = [
+        '#3498db', // Blue
+        '#27ae60', // Green
+        '#e74c3c', // Red
+        '#f39c12', // Orange
+        '#9b59b6', // Purple
+        '#1abc9c', // Turquoise
+        '#e67e22', // Dark Orange
+        '#34495e', // Dark Blue
+        '#16a085', // Dark Turquoise
+        '#c0392b', // Dark Red
+        '#8e44ad', // Dark Purple
+        '#d35400', // Dark Orange
+        '#2980b9', // Blue
+        '#27ae60'  // Green
+    ];
+    
+    // Collect all coordinates for bounds calculation
+    const allCoords = [];
+    
+    // Draw route for each day
+    geometryData.days.forEach(day => {
+        const color = dayColors[(day.day_number - 1) % dayColors.length];
+        
+        // Draw polyline for the route
+        if (day.geometry && day.geometry.length > 0) {
+            const latlngs = day.geometry.map(coord => [coord[1], coord[0]]); // Convert [lon, lat] to [lat, lon]
+            const polyline = L.polyline(latlngs, {
+                color: color,
+                weight: 4,
+                opacity: 0.8
+            }).addTo(map);
+            
+            polyline.bindPopup(`Day ${day.day_number}: ${day.start.name} to ${day.end.name}`);
+            routeLayers.push(polyline);
+            
+            // Add coordinates to bounds
+            latlngs.forEach(coord => allCoords.push(coord));
+        }
+        
+        // Add start marker (green)
+        const startMarker = L.marker([day.start.latitude, day.start.longitude], {
+            icon: L.divIcon({
+                className: 'custom-marker start-marker',
+                html: `<div style="background-color: #27ae60; color: white; border-radius: 50%; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; font-weight: bold; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">${day.day_number}</div>`,
+                iconSize: [30, 30],
+                iconAnchor: [15, 15]
+            })
+        }).addTo(map);
+        
+        startMarker.bindPopup(`<strong>Day ${day.day_number} Start</strong><br>${day.start.name}<br>(${day.start.waypoint_type})`);
+        routeLayers.push(startMarker);
+        allCoords.push([day.start.latitude, day.start.longitude]);
+        
+        // Add end marker (red) - only for the last day or if it's different from next day's start
+        const isLastDay = day.day_number === geometryData.days.length;
+        const isDifferentFromNext = !isLastDay && 
+            (day.end.latitude !== geometryData.days[day.day_number].start.latitude ||
+             day.end.longitude !== geometryData.days[day.day_number].start.longitude);
+        
+        if (isLastDay || isDifferentFromNext) {
+            const endMarker = L.marker([day.end.latitude, day.end.longitude], {
+                icon: L.divIcon({
+                    className: 'custom-marker end-marker',
+                    html: `<div style="background-color: #e74c3c; color: white; border-radius: 50%; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; font-weight: bold; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">${day.day_number}</div>`,
+                    iconSize: [30, 30],
+                    iconAnchor: [15, 15]
+                })
+            }).addTo(map);
+            
+            endMarker.bindPopup(`<strong>Day ${day.day_number} End</strong><br>${day.end.name}<br>(${day.end.waypoint_type})`);
+            routeLayers.push(endMarker);
+            allCoords.push([day.end.latitude, day.end.longitude]);
+        }
+    });
+    
+    // Fit map to show all points
+    if (allCoords.length > 0) {
+        const bounds = L.latLngBounds(allCoords);
+        map.fitBounds(bounds, { padding: [50, 50] });
+    }
+    
+    // Scroll to map
+    mapSection.scrollIntoView({ behavior: 'smooth' });
+}
+
+// Handle close map
+function handleCloseMap() {
+    mapSection.style.display = 'none';
+}
+
+// Handle generate new
+function handleGenerateNew() {
+    // Reset form
+    form.reset();
+    daysInput.value = 3;
+    preferAccommodationCheckbox.checked = true;
+    
+    // Clear autocomplete state
+    selectedWaypoint = null;
+    currentSuggestions = [];
+    hideSuggestions();
+    
+    // Clear state
+    currentItinerary = null;
+    currentRequestParams = null;
+    
+    // Clear map layers
+    if (map) {
+        routeLayers.forEach(layer => {
+            map.removeLayer(layer);
+        });
+        routeLayers = [];
+    }
+    
+    // Hide results, errors, and map
+    resultsSection.style.display = 'none';
+    errorDiv.style.display = 'none';
+    mapSection.style.display = 'none';
+    
+    // Show form
+    document.getElementById('form-section').scrollIntoView({ behavior: 'smooth' });
+}

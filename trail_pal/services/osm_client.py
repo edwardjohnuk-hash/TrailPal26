@@ -60,11 +60,20 @@ class OverpassClient:
     """Client for querying OpenStreetMap via the Overpass API."""
 
     # Mapping of OSM tags to waypoint types
+    # Order matters: more specific matches first
     TAG_MAPPINGS = [
+        # Transport-accessible locations
+        ({"railway": "station"}, WaypointType.TRAIN_STATION),
+        ({"public_transport": "station", "railway": "station"}, WaypointType.TRAIN_STATION),
+        ({"place": "city"}, WaypointType.CITY),
+        ({"place": "town"}, WaypointType.TOWN),
+        ({"place": "village"}, WaypointType.VILLAGE),
+        # Accommodations
         ({"tourism": "camp_site"}, WaypointType.CAMPSITE),
         ({"tourism": "hostel"}, WaypointType.HOSTEL),
         ({"tourism": "guest_house"}, WaypointType.GUEST_HOUSE),
         ({"tourism": "hotel"}, WaypointType.HOTEL),
+        # Scenic points
         ({"tourism": "viewpoint"}, WaypointType.VIEWPOINT),
         ({"natural": "peak"}, WaypointType.PEAK),
     ]
@@ -100,11 +109,19 @@ class OverpassClient:
         """
         bbox_str = bbox.to_overpass_bbox()
 
-        # Query for accommodations (campsites, hostels, guest houses, hotels)
-        # and scenic points (viewpoints, peaks)
+        # Query for accommodations, scenic points, and transport-accessible locations
         query = f"""
 [out:json][timeout:90];
 (
+  // Transport-accessible locations
+  node["railway"="station"]({bbox_str});
+  node["public_transport"="station"]({bbox_str});
+  node["place"="village"]({bbox_str});
+  way["place"="village"]({bbox_str});
+  node["place"="town"]({bbox_str});
+  way["place"="town"]({bbox_str});
+  node["place"="city"]({bbox_str});
+  way["place"="city"]({bbox_str});
   // Accommodations
   node["tourism"="camp_site"]({bbox_str});
   way["tourism"="camp_site"]({bbox_str});
