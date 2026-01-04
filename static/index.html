@@ -72,8 +72,70 @@
             <div class="actions">
                 <button id="download-gpx-btn" class="btn-primary">Download GPX</button>
                 <button id="view-map-btn" class="btn-primary">View Map</button>
-                <button id="load-pubs-btn" class="btn-pub">🍺 Load Pub Recommendations</button>
+                <button id="load-pubs-btn" class="btn-pub">Load Pub Recommendations</button>
+                <button id="rate-route-btn" class="btn-feedback">Rate This Route</button>
                 <button id="generate-new-btn" class="btn-secondary">Generate New Itinerary</button>
+            </div>
+
+            <!-- Feedback Section -->
+            <div id="feedback-section" class="feedback-section" style="display: none;">
+                <div class="feedback-header">
+                    <h3>Rate This Route</h3>
+                    <button id="close-feedback-btn" class="btn-close-small">×</button>
+                </div>
+
+                <!-- Step 1: Star Rating -->
+                <div id="feedback-step-1" class="feedback-step">
+                    <p class="feedback-prompt">How would you rate this route?</p>
+                    <div class="star-rating" id="star-rating">
+                        <span class="star" data-rating="1">★</span>
+                        <span class="star" data-rating="2">★</span>
+                        <span class="star" data-rating="3">★</span>
+                        <span class="star" data-rating="4">★</span>
+                        <span class="star" data-rating="5">★</span>
+                    </div>
+                    <p class="rating-label" id="rating-label"></p>
+                </div>
+
+                <!-- Step 2: Feedback Reasons -->
+                <div id="feedback-step-2" class="feedback-step" style="display: none;">
+                    <p class="feedback-prompt">What influenced your rating? <span class="optional-hint">(select all that apply)</span></p>
+                    
+                    <div id="positive-reasons" class="feedback-reasons">
+                        <h4 class="reasons-category">What you liked:</h4>
+                        <label class="feedback-chip"><input type="checkbox" value="great_scenery"> Great scenery</label>
+                        <label class="feedback-chip"><input type="checkbox" value="good_trail_surface"> Good trail surface</label>
+                        <label class="feedback-chip"><input type="checkbox" value="easy_to_follow"> Easy to follow</label>
+                        <label class="feedback-chip"><input type="checkbox" value="well_paced"> Well-paced distances</label>
+                        <label class="feedback-chip"><input type="checkbox" value="good_accommodation"> Good accommodation options</label>
+                        <label class="feedback-chip"><input type="checkbox" value="nice_pubs"> Nice pub recommendations</label>
+                    </div>
+
+                    <div id="negative-reasons" class="feedback-reasons">
+                        <h4 class="reasons-category">Areas for improvement:</h4>
+                        <label class="feedback-chip"><input type="checkbox" value="route_too_long"> Route too long</label>
+                        <label class="feedback-chip"><input type="checkbox" value="route_too_short"> Route too short</label>
+                        <label class="feedback-chip"><input type="checkbox" value="too_much_elevation"> Too much elevation</label>
+                        <label class="feedback-chip"><input type="checkbox" value="poor_path_quality"> Poor path quality</label>
+                        <label class="feedback-chip"><input type="checkbox" value="difficult_navigation"> Difficult navigation</label>
+                        <label class="feedback-chip"><input type="checkbox" value="missing_amenities"> Missing amenities</label>
+                        <label class="feedback-chip"><input type="checkbox" value="backtracking_issues"> Backtracking issues</label>
+                    </div>
+
+                    <div class="feedback-actions">
+                        <button id="back-to-rating-btn" class="btn-secondary-small">Back</button>
+                        <button id="submit-feedback-btn" class="btn-primary-small">Submit Feedback</button>
+                    </div>
+                </div>
+
+                <!-- Step 3: Thank You -->
+                <div id="feedback-step-3" class="feedback-step" style="display: none;">
+                    <div class="thank-you-message">
+                        <span class="thank-you-icon">✓</span>
+                        <p>Thank you for your feedback!</p>
+                        <p class="thank-you-subtext">Your input helps us improve route recommendations.</p>
+                    </div>
+                </div>
             </div>
         </div>
 

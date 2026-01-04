@@ -5,6 +5,10 @@ let currentPubRecommendations = null;
 let map = null;
 let routeLayers = [];
 
+// Feedback state
+let feedbackRating = 0;
+let feedbackSubmitted = false;
+
 // DOM elements
 const form = document.getElementById('itinerary-form');
 const regionSelect = document.getElementById('region');
@@ -26,6 +30,18 @@ const generateNewBtn = document.getElementById('generate-new-btn');
 const mapSection = document.getElementById('map-section');
 const mapContainer = document.getElementById('map');
 const closeMapBtn = document.getElementById('close-map-btn');
+
+// Feedback DOM elements
+const rateRouteBtn = document.getElementById('rate-route-btn');
+const feedbackSection = document.getElementById('feedback-section');
+const closeFeedbackBtn = document.getElementById('close-feedback-btn');
+const feedbackStep1 = document.getElementById('feedback-step-1');
+const feedbackStep2 = document.getElementById('feedback-step-2');
+const feedbackStep3 = document.getElementById('feedback-step-3');
+const starRating = document.getElementById('star-rating');
+const ratingLabel = document.getElementById('rating-label');
+const backToRatingBtn = document.getElementById('back-to-rating-btn');
+const submitFeedbackBtn = document.getElementById('submit-feedback-btn');
 
 // Autocomplete state
 let autocompleteTimeout = null;
@@ -52,6 +68,23 @@ document.addEventListener('DOMContentLoaded', () => {
     
     if (loadPubsBtn) {
         loadPubsBtn.addEventListener('click', handleLoadPubs);
+    }
+    
+    // Feedback event listeners
+    if (rateRouteBtn) {
+        rateRouteBtn.addEventListener('click', handleRateRoute);
+    }
+    if (closeFeedbackBtn) {
+        closeFeedbackBtn.addEventListener('click', closeFeedback);
+    }
+    if (starRating) {
+        setupStarRating();
+    }
+    if (backToRatingBtn) {
+        backToRatingBtn.addEventListener('click', showFeedbackStep1);
+    }
+    if (submitFeedbackBtn) {
+        submitFeedbackBtn.addEventListener('click', handleSubmitFeedback);
     }
     
     generateNewBtn.addEventListener('click', handleGenerateNew);
@@ -809,10 +842,18 @@ function handleGenerateNew() {
     currentRequestParams = null;
     currentPubRecommendations = null;
     
+    // Reset feedback state
+    feedbackRating = 0;
+    feedbackSubmitted = false;
+    if (rateRouteBtn) {
+        rateRouteBtn.disabled = false;
+        rateRouteBtn.textContent = 'Rate This Route';
+    }
+    
     // Reset load pubs button
     if (loadPubsBtn) {
         loadPubsBtn.disabled = false;
-        loadPubsBtn.textContent = '🍺 Load Pub Recommendations';
+        loadPubsBtn.textContent = 'Load Pub Recommendations';
     }
     
     // Clear map layers
@@ -823,11 +864,205 @@ function handleGenerateNew() {
         routeLayers = [];
     }
     
-    // Hide results, errors, and map
+    // Hide results, errors, map, and feedback
     resultsSection.style.display = 'none';
     errorDiv.style.display = 'none';
     mapSection.style.display = 'none';
+    if (feedbackSection) {
+        feedbackSection.style.display = 'none';
+    }
     
     // Show form
     document.getElementById('form-section').scrollIntoView({ behavior: 'smooth' });
+}
+
+// ===== FEEDBACK FUNCTIONS =====
+
+// Rating labels for each star level
+const ratingLabels = {
+    1: 'Poor',
+    2: 'Fair',
+    3: 'Good',
+    4: 'Very Good',
+    5: 'Excellent'
+};
+
+// Handle rate route button click
+function handleRateRoute() {
+    if (!currentItinerary) {
+        alert('No itinerary to rate. Please generate an itinerary first.');
+        return;
+    }
+    
+    if (feedbackSubmitted) {
+        alert('You have already submitted feedback for this route.');
+        return;
+    }
+    
+    // Reset feedback state
+    feedbackRating = 0;
+    resetStarRating();
+    resetFeedbackReasons();
+    
+    // Show feedback section with step 1
+    showFeedbackStep1();
+    feedbackSection.style.display = 'block';
+    feedbackSection.scrollIntoView({ behavior: 'smooth' });
+}
+
+// Close feedback section
+function closeFeedback() {
+    feedbackSection.style.display = 'none';
+}
+
+// Setup star rating interaction
+function setupStarRating() {
+    const stars = starRating.querySelectorAll('.star');
+    
+    stars.forEach(star => {
+        star.addEventListener('click', () => {
+            feedbackRating = parseInt(star.dataset.rating);
+            updateStarDisplay(feedbackRating);
+            ratingLabel.textContent = ratingLabels[feedbackRating];
+            
+            // After a short delay, move to step 2
+            setTimeout(() => {
+                showFeedbackStep2();
+            }, 300);
+        });
+        
+        star.addEventListener('mouseenter', () => {
+            const hoverRating = parseInt(star.dataset.rating);
+            updateStarDisplay(hoverRating);
+            ratingLabel.textContent = ratingLabels[hoverRating];
+        });
+        
+        star.addEventListener('mouseleave', () => {
+            updateStarDisplay(feedbackRating);
+            ratingLabel.textContent = feedbackRating ? ratingLabels[feedbackRating] : '';
+        });
+    });
+}
+
+// Update star display
+function updateStarDisplay(rating) {
+    const stars = starRating.querySelectorAll('.star');
+    stars.forEach(star => {
+        const starRatingValue = parseInt(star.dataset.rating);
+        if (starRatingValue <= rating) {
+            star.classList.add('active');
+        } else {
+            star.classList.remove('active');
+        }
+    });
+}
+
+// Reset star rating display
+function resetStarRating() {
+    updateStarDisplay(0);
+    ratingLabel.textContent = '';
+}
+
+// Reset feedback reason checkboxes
+function resetFeedbackReasons() {
+    const checkboxes = feedbackStep2.querySelectorAll('input[type="checkbox"]');
+    checkboxes.forEach(cb => cb.checked = false);
+}
+
+// Show feedback step 1 (rating)
+function showFeedbackStep1() {
+    feedbackStep1.style.display = 'block';
+    feedbackStep2.style.display = 'none';
+    feedbackStep3.style.display = 'none';
+}
+
+// Show feedback step 2 (reasons)
+function showFeedbackStep2() {
+    feedbackStep1.style.display = 'none';
+    feedbackStep2.style.display = 'block';
+    feedbackStep3.style.display = 'none';
+}
+
+// Show feedback step 3 (thank you)
+function showFeedbackStep3() {
+    feedbackStep1.style.display = 'none';
+    feedbackStep2.style.display = 'none';
+    feedbackStep3.style.display = 'block';
+    
+    // Auto-close after 3 seconds
+    setTimeout(() => {
+        closeFeedback();
+    }, 3000);
+}
+
+// Get selected feedback reasons
+function getSelectedReasons() {
+    const checkboxes = feedbackStep2.querySelectorAll('input[type="checkbox"]:checked');
+    return Array.from(checkboxes).map(cb => cb.value);
+}
+
+// Build route summary for feedback
+function buildRouteSummary() {
+    if (!currentItinerary) return {};
+    
+    return {
+        total_distance_km: currentItinerary.total_distance_km,
+        total_duration_minutes: currentItinerary.total_duration_minutes,
+        total_elevation_gain_m: currentItinerary.total_elevation_gain_m,
+        num_days: currentItinerary.days.length,
+        days: currentItinerary.days.map(day => ({
+            day_number: day.day_number,
+            start_name: day.start.name,
+            end_name: day.end.name,
+            distance_km: day.distance_km
+        }))
+    };
+}
+
+// Handle submit feedback
+async function handleSubmitFeedback() {
+    if (!currentItinerary || feedbackRating === 0) {
+        alert('Please select a rating first.');
+        return;
+    }
+    
+    submitFeedbackBtn.disabled = true;
+    submitFeedbackBtn.textContent = 'Submitting...';
+    
+    const feedbackData = {
+        itinerary_id: currentItinerary.id,
+        region: currentItinerary.region,
+        rating: feedbackRating,
+        feedback_reasons: getSelectedReasons(),
+        route_summary: buildRouteSummary()
+    };
+    
+    try {
+        const response = await fetch('/feedback', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(feedbackData)
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to submit feedback');
+        }
+        
+        // Success - mark as submitted and show thank you
+        feedbackSubmitted = true;
+        rateRouteBtn.disabled = true;
+        rateRouteBtn.textContent = 'Feedback Submitted';
+        
+        showFeedbackStep3();
+        
+    } catch (error) {
+        console.error('Error submitting feedback:', error);
+        alert(`Error submitting feedback: ${error.message}`);
+    } finally {
+        submitFeedbackBtn.disabled = false;
+        submitFeedbackBtn.textContent = 'Submit Feedback';
+    }
 }

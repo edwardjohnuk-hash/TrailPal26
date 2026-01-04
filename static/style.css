@@ -390,6 +390,237 @@ button:disabled {
     border: none;
 }
 
+/* Feedback button */
+.btn-feedback {
+    background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%);
+}
+
+.btn-feedback:hover {
+    background: linear-gradient(135deg, #8e44ad 0%, #7d3c98 100%);
+}
+
+.btn-feedback:disabled {
+    background: #bdc3c7;
+    cursor: not-allowed;
+}
+
+/* Pub button */
+.btn-pub {
+    background: linear-gradient(135deg, #D4A84B 0%, #B8860B 100%);
+}
+
+.btn-pub:hover {
+    background: linear-gradient(135deg, #B8860B 0%, #9A7209 100%);
+}
+
+/* Feedback Section */
+.feedback-section {
+    margin-top: 25px;
+    padding: 25px;
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    border-radius: 12px;
+    border: 1px solid #dee2e6;
+}
+
+.feedback-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.feedback-header h3 {
+    color: #2c3e50;
+    margin: 0;
+    font-size: 1.3em;
+}
+
+.btn-close-small {
+    background: #6c757d;
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 28px;
+    height: 28px;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    transition: background 0.3s;
+}
+
+.btn-close-small:hover {
+    background: #5a6268;
+}
+
+.feedback-step {
+    text-align: center;
+}
+
+.feedback-prompt {
+    color: #495057;
+    font-size: 1.1em;
+    margin-bottom: 20px;
+}
+
+.optional-hint {
+    color: #868e96;
+    font-size: 0.85em;
+}
+
+/* Star Rating */
+.star-rating {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    margin-bottom: 15px;
+}
+
+.star {
+    font-size: 42px;
+    color: #dee2e6;
+    cursor: pointer;
+    transition: color 0.2s, transform 0.15s;
+    user-select: none;
+}
+
+.star:hover {
+    transform: scale(1.15);
+}
+
+.star.active {
+    color: #ffc107;
+}
+
+.rating-label {
+    color: #495057;
+    font-size: 1.1em;
+    font-weight: 500;
+    min-height: 28px;
+}
+
+/* Feedback Reasons */
+.feedback-reasons {
+    margin-bottom: 20px;
+    text-align: left;
+}
+
+.reasons-category {
+    color: #6c757d;
+    font-size: 0.9em;
+    font-weight: 600;
+    margin-bottom: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.feedback-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 8px 14px;
+    margin: 4px;
+    background: white;
+    border: 1px solid #dee2e6;
+    border-radius: 20px;
+    cursor: pointer;
+    font-size: 0.9em;
+    color: #495057;
+    transition: all 0.2s;
+}
+
+.feedback-chip:hover {
+    border-color: #9b59b6;
+    background: #f8f0fc;
+}
+
+.feedback-chip input[type="checkbox"] {
+    display: none;
+}
+
+.feedback-chip:has(input:checked) {
+    background: #9b59b6;
+    color: white;
+    border-color: #9b59b6;
+}
+
+/* Feedback Action Buttons */
+.feedback-actions {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 25px;
+}
+
+.btn-primary-small {
+    padding: 10px 24px;
+    background: #9b59b6;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background 0.3s;
+}
+
+.btn-primary-small:hover {
+    background: #8e44ad;
+}
+
+.btn-primary-small:disabled {
+    background: #bdc3c7;
+    cursor: not-allowed;
+}
+
+.btn-secondary-small {
+    padding: 10px 24px;
+    background: #6c757d;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background 0.3s;
+}
+
+.btn-secondary-small:hover {
+    background: #5a6268;
+}
+
+/* Thank You Message */
+.thank-you-message {
+    padding: 30px;
+}
+
+.thank-you-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 60px;
+    height: 60px;
+    background: #27ae60;
+    color: white;
+    border-radius: 50%;
+    font-size: 28px;
+    margin-bottom: 15px;
+}
+
+.thank-you-message p {
+    color: #2c3e50;
+    font-size: 1.2em;
+    font-weight: 500;
+    margin: 0;
+}
+
+.thank-you-subtext {
+    color: #6c757d !important;
+    font-size: 0.95em !important;
+    font-weight: 400 !important;
+    margin-top: 8px !important;
+}
+
 @media (max-width: 600px) {
     .container {
         padding: 15px;
@@ -405,6 +636,15 @@ button:disabled {
 
     .map-container {
         height: 400px;
+    }
+
+    .star {
+        font-size: 36px;
+    }
+
+    .feedback-chip {
+        padding: 6px 12px;
+        font-size: 0.85em;
     }
 }
 

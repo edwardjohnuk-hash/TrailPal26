@@ -24,7 +24,7 @@ from trail_pal.algorithm.itinerary_generator import (
 )
 from trail_pal.config import get_settings
 from trail_pal.db.database import SessionLocal
-from trail_pal.db.models import Connection, Region, Waypoint
+from trail_pal.db.models import Connection, Region, RouteFeedback, Waypoint
 from trail_pal.services.pub_recommender import PubRecommenderService, PubRecommendation
 
 logger = logging.getLogger(__name__)
@@ -277,6 +277,28 @@ class PubDiscoveryResponse(BaseModel):
     connections_processed: Optional[int] = None
     pubs_found: int
     pubs_stored: int
+
+
+class FeedbackRequest(BaseModel):
+    """Request to submit route feedback."""
+
+    itinerary_id: UUID = Field(..., description="ID of the itinerary being rated")
+    region: str = Field(..., description="Region name")
+    rating: int = Field(..., ge=1, le=5, description="Rating from 1 to 5")
+    feedback_reasons: list[str] = Field(
+        default_factory=list, description="List of selected feedback reasons"
+    )
+    route_summary: dict = Field(
+        default_factory=dict,
+        description="Summary of the route (days, distance, waypoints)",
+    )
+
+
+class FeedbackResponse(BaseModel):
+    """Response after submitting feedback."""
+
+    id: UUID
+    message: str = "Thank you for your feedback!"
 
 
 # --- Dependencies ---
@@ -1476,6 +1498,51 @@ async def get_itinerary_geometry(
         region=itinerary.region_name,
         days=day_geometries,
     )
+
+
+@app.post(
+    "/feedback",
+    response_model=FeedbackResponse,
+    tags=["Feedback"],
+    responses={
+        400: {"model": ErrorResponse},
+    },
+)
+async def submit_feedback(
+    request: FeedbackRequest,
+    db: Session = Depends(get_db),
+    _api_key: str = Depends(optional_api_key),
+):
+    """Submit feedback for a generated route.
+
+    Allows users to rate routes 1-5 and provide reasons for their rating.
+    Feedback is stored for analysis and route improvement.
+    """
+    try:
+        feedback = RouteFeedback(
+            itinerary_id=request.itinerary_id,
+            region=request.region.lower(),
+            rating=request.rating,
+            feedback_reasons=request.feedback_reasons,
+            route_summary=request.route_summary,
+        )
+        db.add(feedback)
+        db.commit()
+        db.refresh(feedback)
+
+        logger.info(
+            f"Feedback submitted: region={request.region}, "
+            f"rating={request.rating}, reasons={request.feedback_reasons}"
+        )
+
+        return FeedbackResponse(id=feedback.id)
+    except Exception as e:
+        logger.error(f"Error submitting feedback: {e}")
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to submit feedback: {str(e)}",
+        )
 
 
 @app.post(

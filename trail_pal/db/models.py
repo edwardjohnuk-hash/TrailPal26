@@ -254,6 +254,36 @@ class ConnectionOverlap(Base):
         )
 
 
+class RouteFeedback(Base):
+    """User feedback and rating for a generated route."""
+
+    __tablename__ = "route_feedback"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    itinerary_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False
+    )
+    region: Mapped[str] = mapped_column(String(255), nullable=False)
+    
+    # Rating from 1-5
+    rating: Mapped[int] = mapped_column(Integer, nullable=False)
+    
+    # Selected feedback reasons as a JSON array
+    feedback_reasons: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
+    
+    # Route summary with details (days, distance, waypoints, etc.)
+    route_summary: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+
+    def __repr__(self) -> str:
+        return f"<RouteFeedback(itinerary_id={self.itinerary_id}, rating={self.rating})>"
+
+
 class Pub(Base):
     """A pub found near a waypoint or route segment."""
 
