@@ -194,6 +194,38 @@ class ErrorResponse(BaseModel):
     detail: str
 
 
+class DayPubsRequest(BaseModel):
+    """Day data for pub recommendations request."""
+
+    day_number: int
+    start_lat: float
+    start_lon: float
+    end_lat: float
+    end_lon: float
+    connection_id: Optional[UUID] = None
+
+
+class PubsRequest(BaseModel):
+    """Request for on-demand pub recommendations."""
+
+    days: list[DayPubsRequest] = Field(..., description="Day data with coordinates")
+
+
+class DayPubsResponse(BaseModel):
+    """Pub recommendations for a single day."""
+
+    day_number: int
+    start_pub: Optional[PubRecommendationResponse] = None
+    end_pub: Optional[PubRecommendationResponse] = None
+    midpoint_pub: Optional[PubRecommendationResponse] = None
+
+
+class PubsResponse(BaseModel):
+    """Response containing pub recommendations for all days."""
+
+    days: list[DayPubsResponse]
+
+
 class DayGeometryResponse(BaseModel):
     """Route geometry for a single day."""
 
@@ -730,54 +762,10 @@ async def generate_itineraries(
             detail="No itineraries found. Ensure waypoints and connections exist for this region.",
         )
 
-    # Get pub recommendations for the first itinerary (to avoid too many API calls)
-    # Build day data for pub recommendations
-    pub_recommendations_by_day = {}
-    if itineraries:
-        first_itinerary = itineraries[0]
-        days_data = [
-            {
-                "day_number": day.day_number,
-                "start_lat": day.start_waypoint.latitude,
-                "start_lon": day.start_waypoint.longitude,
-                "end_lat": day.end_waypoint.latitude,
-                "end_lon": day.end_waypoint.longitude,
-                "connection_id": day.connection_id,
-            }
-            for day in first_itinerary.days
-        ]
-
-        logger.info(f"Fetching pub recommendations for {len(days_data)} days")
-        try:
-            pub_service = PubRecommenderService(db=db)
-            pub_recs = await pub_service.get_recommendations_for_itinerary(days_data)
-            pub_recommendations_by_day = {rec.day_number: rec for rec in pub_recs}
-            
-            # Log what we found
-            total_pubs = sum(
-                (1 if r.start_pub else 0) + (1 if r.end_pub else 0) + (1 if r.midpoint_pub else 0)
-                for r in pub_recs
-            )
-            logger.info(f"Found {total_pubs} pub recommendations across {len(pub_recs)} days")
-        except Exception as e:
-            logger.exception(f"Failed to get pub recommendations: {e}")
-            # Continue without pub recommendations
-
-    def _pub_to_response(pub: PubRecommendation) -> PubRecommendationResponse:
-        """Convert a PubRecommendation to PubRecommendationResponse."""
-        return PubRecommendationResponse(
-            name=pub.name,
-            rating=pub.rating,
-            latitude=pub.latitude,
-            longitude=pub.longitude,
-            place_id=pub.place_id,
-            distance_m=pub.distance_m,
-            user_ratings_total=pub.user_ratings_total,
-        )
-
     # Convert to response models
+    # Note: Pub recommendations are fetched on-demand via /itineraries/pubs endpoint
     response_itineraries = []
-    for idx, it in enumerate(itineraries):
+    for it in itineraries:
         days = []
         for day in it.days:
             # Convert surface_stats if available
@@ -788,20 +776,6 @@ async def generate_itineraries(
                     waytypes=day.surface_stats.waytypes,
                     total_distance_km=day.surface_stats.total_distance_km,
                 )
-
-            # Get pub recommendations for this day (only for first itinerary)
-            start_pub_response = None
-            end_pub_response = None
-            midpoint_pub_response = None
-
-            if idx == 0 and day.day_number in pub_recommendations_by_day:
-                day_pubs = pub_recommendations_by_day[day.day_number]
-                if day_pubs.start_pub:
-                    start_pub_response = _pub_to_response(day_pubs.start_pub)
-                if day_pubs.end_pub:
-                    end_pub_response = _pub_to_response(day_pubs.end_pub)
-                if day_pubs.midpoint_pub:
-                    midpoint_pub_response = _pub_to_response(day_pubs.midpoint_pub)
 
             days.append(
                 DayRouteResponse(
@@ -833,9 +807,10 @@ async def generate_itineraries(
                     elevation_gain_m=day.elevation_gain_m,
                     elevation_loss_m=day.elevation_loss_m,
                     surface_stats=surface_stats_response,
-                    start_pub=start_pub_response,
-                    end_pub=end_pub_response,
-                    midpoint_pub=midpoint_pub_response,
+                    # Pubs are fetched on-demand via /itineraries/pubs
+                    start_pub=None,
+                    end_pub=None,
+                    midpoint_pub=None,
                 )
             )
 
@@ -855,6 +830,88 @@ async def generate_itineraries(
         count=len(response_itineraries),
         itineraries=response_itineraries,
     )
+
+
+@app.post(
+    "/itineraries/pubs",
+    response_model=PubsResponse,
+    tags=["Itineraries"],
+    responses={
+        400: {"model": ErrorResponse},
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+    },
+)
+async def get_itinerary_pubs(
+    request: PubsRequest,
+    db: Session = Depends(get_db),
+    _api_key: str = Depends(optional_api_key),
+):
+    """Get pub recommendations for an itinerary on-demand.
+
+    This endpoint fetches pub recommendations from Google Places API for each day's
+    start waypoint, end waypoint, and route midpoint. Only pubs with 4.2+ star rating
+    are returned. If no pub meets the criteria, that field will be null.
+
+    This is called separately from itinerary generation to keep generation fast.
+    """
+    logger.info(f"Fetching pub recommendations for {len(request.days)} days")
+
+    # Convert request to format expected by PubRecommenderService
+    days_data = [
+        {
+            "day_number": day.day_number,
+            "start_lat": day.start_lat,
+            "start_lon": day.start_lon,
+            "end_lat": day.end_lat,
+            "end_lon": day.end_lon,
+            "connection_id": day.connection_id,
+        }
+        for day in request.days
+    ]
+
+    try:
+        pub_service = PubRecommenderService(db=db)
+        pub_recs = await pub_service.get_recommendations_for_itinerary(days_data)
+
+        # Log what we found
+        total_pubs = sum(
+            (1 if r.start_pub else 0) + (1 if r.end_pub else 0) + (1 if r.midpoint_pub else 0)
+            for r in pub_recs
+        )
+        logger.info(f"Found {total_pubs} pub recommendations across {len(pub_recs)} days")
+
+        # Convert to response
+        def _pub_to_response(pub: PubRecommendation) -> PubRecommendationResponse:
+            return PubRecommendationResponse(
+                name=pub.name,
+                rating=pub.rating,
+                latitude=pub.latitude,
+                longitude=pub.longitude,
+                place_id=pub.place_id,
+                distance_m=pub.distance_m,
+                user_ratings_total=pub.user_ratings_total,
+            )
+
+        days_response = []
+        for rec in pub_recs:
+            days_response.append(
+                DayPubsResponse(
+                    day_number=rec.day_number,
+                    start_pub=_pub_to_response(rec.start_pub) if rec.start_pub else None,
+                    end_pub=_pub_to_response(rec.end_pub) if rec.end_pub else None,
+                    midpoint_pub=_pub_to_response(rec.midpoint_pub) if rec.midpoint_pub else None,
+                )
+            )
+
+        return PubsResponse(days=days_response)
+
+    except Exception as e:
+        logger.exception(f"Failed to get pub recommendations: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch pub recommendations: {str(e)}",
+        )
 
 
 @app.post(

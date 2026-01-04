@@ -1,6 +1,7 @@
 // State
 let currentItinerary = null;
 let currentRequestParams = null;
+let currentPubRecommendations = null;
 let map = null;
 let routeLayers = [];
 
@@ -20,6 +21,7 @@ const itinerarySummary = document.getElementById('itinerary-summary');
 const daysList = document.getElementById('days-list');
 const downloadGpxBtn = document.getElementById('download-gpx-btn');
 const viewMapBtn = document.getElementById('view-map-btn');
+const loadPubsBtn = document.getElementById('load-pubs-btn');
 const generateNewBtn = document.getElementById('generate-new-btn');
 const mapSection = document.getElementById('map-section');
 const mapContainer = document.getElementById('map');
@@ -46,6 +48,10 @@ document.addEventListener('DOMContentLoaded', () => {
     
     if (closeMapBtn) {
         closeMapBtn.addEventListener('click', handleCloseMap);
+    }
+    
+    if (loadPubsBtn) {
+        loadPubsBtn.addEventListener('click', handleLoadPubs);
     }
     
     generateNewBtn.addEventListener('click', handleGenerateNew);
@@ -397,24 +403,8 @@ function displayItinerary(itinerary) {
             surfaceHtml = '<div class="surface-stats"><div class="surface-item">Surface data not available</div></div>';
         }
 
-        // Build pub recommendations HTML
-        let pubsHtml = '';
-        const hasPubs = day.start_pub || day.midpoint_pub || day.end_pub;
-        if (hasPubs) {
-            pubsHtml = '<div class="pub-recommendations"><h4>🍺 Recommended Pubs</h4>';
-
-            if (day.start_pub) {
-                pubsHtml += formatPubHtml(day.start_pub, 'At Start');
-            }
-            if (day.midpoint_pub) {
-                pubsHtml += formatPubHtml(day.midpoint_pub, 'Mid-Route');
-            }
-            if (day.end_pub) {
-                pubsHtml += formatPubHtml(day.end_pub, 'At End');
-            }
-
-            pubsHtml += '</div>';
-        }
+        // Placeholder for pub recommendations (loaded on-demand)
+        const pubsHtml = `<div class="pub-recommendations" id="pubs-day-${day.day_number}"></div>`;
         
         dayCard.innerHTML = `
             <h3>Day ${day.day_number}</h3>
@@ -569,6 +559,93 @@ async function handleViewMap() {
     } finally {
         viewMapBtn.disabled = false;
         viewMapBtn.textContent = 'View Map';
+    }
+}
+
+// Handle load pubs
+async function handleLoadPubs() {
+    if (!currentItinerary) {
+        alert('No itinerary to load pubs for. Please generate an itinerary first.');
+        return;
+    }
+    
+    // Check if already loaded
+    if (currentPubRecommendations) {
+        alert('Pub recommendations already loaded.');
+        return;
+    }
+    
+    loadPubsBtn.disabled = true;
+    loadPubsBtn.textContent = '🍺 Loading...';
+    
+    // Build request with day coordinates
+    const pubsRequest = {
+        days: currentItinerary.days.map(day => ({
+            day_number: day.day_number,
+            start_lat: day.start.latitude,
+            start_lon: day.start.longitude,
+            end_lat: day.end.latitude,
+            end_lon: day.end.longitude,
+            connection_id: null  // Could be added if available
+        }))
+    };
+    
+    try {
+        const response = await fetch('/itineraries/pubs', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(pubsRequest)
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to load pub recommendations');
+        }
+        
+        const pubsData = await response.json();
+        currentPubRecommendations = pubsData;
+        
+        // Update the day cards with pub data
+        updateDayCardsWithPubs(pubsData.days);
+        
+        // Update button state
+        loadPubsBtn.textContent = '🍺 Pubs Loaded';
+        
+    } catch (error) {
+        console.error('Error loading pubs:', error);
+        alert(`Error loading pub recommendations: ${error.message}`);
+        loadPubsBtn.disabled = false;
+        loadPubsBtn.textContent = '🍺 Load Pub Recommendations';
+    }
+}
+
+// Update day cards with pub recommendations
+function updateDayCardsWithPubs(pubDays) {
+    for (const dayPubs of pubDays) {
+        const pubContainer = document.getElementById(`pubs-day-${dayPubs.day_number}`);
+        if (!pubContainer) continue;
+        
+        const hasPubs = dayPubs.start_pub || dayPubs.midpoint_pub || dayPubs.end_pub;
+        
+        if (hasPubs) {
+            let pubsHtml = '<h4>🍺 Recommended Pubs</h4>';
+            
+            if (dayPubs.start_pub) {
+                pubsHtml += formatPubHtml(dayPubs.start_pub, 'At Start');
+            }
+            if (dayPubs.midpoint_pub) {
+                pubsHtml += formatPubHtml(dayPubs.midpoint_pub, 'Mid-Route');
+            }
+            if (dayPubs.end_pub) {
+                pubsHtml += formatPubHtml(dayPubs.end_pub, 'At End');
+            }
+            
+            pubContainer.innerHTML = pubsHtml;
+        } else {
+            pubContainer.innerHTML = '<div class="no-pubs">No pubs with 4.2+ rating found nearby</div>';
+        }
     }
 }
 
@@ -730,6 +807,13 @@ function handleGenerateNew() {
     // Clear state
     currentItinerary = null;
     currentRequestParams = null;
+    currentPubRecommendations = null;
+    
+    // Reset load pubs button
+    if (loadPubsBtn) {
+        loadPubsBtn.disabled = false;
+        loadPubsBtn.textContent = '🍺 Load Pub Recommendations';
+    }
     
     // Clear map layers
     if (map) {

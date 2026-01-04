@@ -156,6 +156,19 @@ button:disabled {
     background: #7f8c8d;
 }
 
+.btn-pub {
+    background: #D4A84B;
+}
+
+.btn-pub:hover {
+    background: #B8923D;
+}
+
+.btn-pub:disabled {
+    background: #E8D5A8;
+    color: #8B7355;
+}
+
 .loading {
     text-align: center;
     padding: 20px;
@@ -302,6 +315,13 @@ button:disabled {
 
 .pub-distance {
     color: #8B7355;
+}
+
+.no-pubs {
+    font-size: 13px;
+    color: #8B7355;
+    font-style: italic;
+    padding: 10px 0;
 }
 
 .actions {
