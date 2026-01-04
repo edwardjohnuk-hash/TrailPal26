@@ -1,7 +1,6 @@
 // State
 let currentItinerary = null;
 let currentRequestParams = null;
-let currentPubRecommendations = null;
 let map = null;
 let routeLayers = [];
 
@@ -11,6 +10,7 @@ let feedbackSubmitted = false;
 
 // DOM elements
 const form = document.getElementById('itinerary-form');
+const formSection = document.getElementById('form-section');
 const regionSelect = document.getElementById('region');
 const daysInput = document.getElementById('days');
 const startWaypointInput = document.getElementById('start-waypoint');
@@ -25,7 +25,6 @@ const itinerarySummary = document.getElementById('itinerary-summary');
 const daysList = document.getElementById('days-list');
 const downloadGpxBtn = document.getElementById('download-gpx-btn');
 const viewMapBtn = document.getElementById('view-map-btn');
-const loadPubsBtn = document.getElementById('load-pubs-btn');
 const generateNewBtn = document.getElementById('generate-new-btn');
 const mapSection = document.getElementById('map-section');
 const mapContainer = document.getElementById('map');
@@ -64,10 +63,6 @@ document.addEventListener('DOMContentLoaded', () => {
     
     if (closeMapBtn) {
         closeMapBtn.addEventListener('click', handleCloseMap);
-    }
-    
-    if (loadPubsBtn) {
-        loadPubsBtn.addEventListener('click', handleLoadPubs);
     }
     
     // Feedback event listeners
@@ -130,12 +125,20 @@ async function loadRegions() {
         regions.forEach(region => {
             const option = document.createElement('option');
             option.value = region.name;
-            option.textContent = `${region.name} (${region.country})`;
+            // Special case for Cornwall - just show "Cornwall"
+            if (region.name.toLowerCase() === 'cornwall') {
+                option.textContent = 'Cornwall';
+            } else {
+                option.textContent = `${region.name} (${region.country})`;
+            }
             regionSelect.appendChild(option);
         });
         
-        // Auto-select if there's only one region
-        if (regions.length === 1) {
+        // Auto-select Cornwall if available, otherwise select if only one region
+        const cornwall = regions.find(r => r.name.toLowerCase() === 'cornwall');
+        if (cornwall) {
+            regionSelect.value = cornwall.name;
+        } else if (regions.length === 1) {
             regionSelect.value = regions[0].name;
         }
     } catch (error) {
@@ -299,25 +302,6 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-// Format pub recommendation as HTML
-function formatPubHtml(pub, location) {
-    const stars = '★'.repeat(Math.floor(pub.rating)) + (pub.rating % 1 >= 0.5 ? '½' : '');
-    const distanceText = pub.distance_m < 1000 
-        ? `${Math.round(pub.distance_m)}m away`
-        : `${(pub.distance_m / 1000).toFixed(1)}km away`;
-    
-    return `
-        <div class="pub-item">
-            <div class="pub-location">${escapeHtml(location)}</div>
-            <div class="pub-name">${escapeHtml(pub.name)}</div>
-            <div class="pub-details">
-                <span class="pub-rating">${stars} ${pub.rating.toFixed(1)}</span>
-                <span class="pub-distance">${distanceText}</span>
-            </div>
-        </div>
-    `;
-}
-
 // Handle form submission
 async function handleFormSubmit(e) {
     e.preventDefault();
@@ -385,13 +369,35 @@ function displayItinerary(itinerary) {
     const totalHours = Math.floor(itinerary.total_duration_minutes / 60);
     const totalMinutes = itinerary.total_duration_minutes % 60;
     
+    // Format region name for display
+    const regionDisplay = itinerary.region.toLowerCase() === 'cornwall' 
+        ? 'Cornwall' 
+        : itinerary.region.charAt(0).toUpperCase() + itinerary.region.slice(1);
+    
     itinerarySummary.innerHTML = `
-        <div class="summary-item"><strong>Region:</strong> ${itinerary.region}</div>
+        <div class="summary-item"><strong>Region:</strong> ${regionDisplay}</div>
         <div class="summary-item"><strong>Total Distance:</strong> ${itinerary.total_distance_km.toFixed(1)} km</div>
         <div class="summary-item"><strong>Total Duration:</strong> ${totalHours}h ${totalMinutes}min</div>
         <div class="summary-item"><strong>Total Elevation Gain:</strong> ${itinerary.total_elevation_gain_m.toFixed(0)}m</div>
     `;
     
+    // Build consistent waytype color mapping across all days
+    const allWaytypes = {};
+    itinerary.days.forEach(day => {
+        if (day.surface_stats && day.surface_stats.waytypes) {
+            Object.entries(day.surface_stats.waytypes).forEach(([type, distance]) => {
+                allWaytypes[type] = (allWaytypes[type] || 0) + distance;
+            });
+        }
+    });
+    // Sort by total distance across all days and assign color indices
+    const waytypeColorMap = {};
+    Object.entries(allWaytypes)
+        .sort((a, b) => b[1] - a[1])
+        .forEach(([type], index) => {
+            waytypeColorMap[type] = index;
+        });
+
     // Display days
     daysList.innerHTML = '';
     itinerary.days.forEach(day => {
@@ -401,48 +407,35 @@ function displayItinerary(itinerary) {
         const durationHours = Math.floor(day.duration_minutes / 60);
         const durationMinutes = day.duration_minutes % 60;
         
-        let surfaceHtml = '';
+        let waytypeHtml = '';
         if (day.surface_stats && day.surface_stats.total_distance_km > 0) {
-            const surfaces = day.surface_stats.surfaces;
             const waytypes = day.surface_stats.waytypes;
+            const totalKm = day.surface_stats.total_distance_km;
             
-            // Get top surface types
-            const surfaceEntries = Object.entries(surfaces)
-                .sort((a, b) => b[1] - a[1])
-                .slice(0, 3);
-            
-            // Get top way types
+            // Sort way types by distance for this day
             const waytypeEntries = Object.entries(waytypes)
-                .sort((a, b) => b[1] - a[1])
-                .slice(0, 3);
-            
-            surfaceHtml = '<div class="surface-stats">';
-            
-            if (surfaceEntries.length > 0) {
-                surfaceHtml += '<h4>Surface Types:</h4>';
-                surfaceEntries.forEach(([type, distance]) => {
-                    const percentage = (distance / day.surface_stats.total_distance_km) * 100;
-                    const typeDisplay = type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-                    surfaceHtml += `<div class="surface-item">${typeDisplay}: ${percentage.toFixed(1)}% (${distance.toFixed(1)} km)</div>`;
-                });
-            }
+                .sort((a, b) => b[1] - a[1]);
             
             if (waytypeEntries.length > 0) {
-                surfaceHtml += '<h4>Way Types:</h4>';
+                // Build the stacked bar segments using consistent colors
+                let barSegments = '';
+                let legendItems = '';
+                
                 waytypeEntries.forEach(([type, distance]) => {
-                    const percentage = (distance / day.surface_stats.total_distance_km) * 100;
+                    const colorIndex = waytypeColorMap[type] || 0;
+                    const percentage = (distance / totalKm) * 100;
                     const typeDisplay = type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-                    surfaceHtml += `<div class="surface-item">${typeDisplay}: ${percentage.toFixed(1)}% (${distance.toFixed(1)} km)</div>`;
+                    barSegments += `<div class="waytype-segment waytype-${colorIndex}" style="width: ${percentage}%" title="${typeDisplay}: ${percentage.toFixed(1)}%"></div>`;
+                    legendItems += `<div class="waytype-legend-item"><span class="waytype-dot waytype-${colorIndex}"></span>${typeDisplay} <span class="waytype-percent">${percentage.toFixed(0)}%</span></div>`;
                 });
+                
+                waytypeHtml = `
+                    <div class="waytype-stats">
+                        <div class="waytype-bar">${barSegments}</div>
+                        <div class="waytype-legend">${legendItems}</div>
+                    </div>`;
             }
-            
-            surfaceHtml += '</div>';
-        } else {
-            surfaceHtml = '<div class="surface-stats"><div class="surface-item">Surface data not available</div></div>';
         }
-
-        // Placeholder for pub recommendations (loaded on-demand)
-        const pubsHtml = `<div class="pub-recommendations" id="pubs-day-${day.day_number}"></div>`;
         
         dayCard.innerHTML = `
             <h3>Day ${day.day_number}</h3>
@@ -470,15 +463,16 @@ function displayItinerary(itinerary) {
                 </div>
                 ` : ''}
             </div>
-            ${surfaceHtml}
-            ${pubsHtml}
-        `;
+                ${waytypeHtml}
+            `;
         
         daysList.appendChild(dayCard);
     });
     
-    // Show results
+    // Hide form, show results
+    formSection.style.display = 'none';
     resultsSection.style.display = 'block';
+    resultsSection.scrollIntoView({ behavior: 'smooth' });
 }
 
 // Handle GPX download
@@ -597,93 +591,6 @@ async function handleViewMap() {
     } finally {
         viewMapBtn.disabled = false;
         viewMapBtn.textContent = 'View Map';
-    }
-}
-
-// Handle load pubs
-async function handleLoadPubs() {
-    if (!currentItinerary) {
-        alert('No itinerary to load pubs for. Please generate an itinerary first.');
-        return;
-    }
-    
-    // Check if already loaded
-    if (currentPubRecommendations) {
-        alert('Pub recommendations already loaded.');
-        return;
-    }
-    
-    loadPubsBtn.disabled = true;
-    loadPubsBtn.textContent = '🍺 Loading...';
-    
-    // Build request with day coordinates
-    const pubsRequest = {
-        days: currentItinerary.days.map(day => ({
-            day_number: day.day_number,
-            start_lat: day.start.latitude,
-            start_lon: day.start.longitude,
-            end_lat: day.end.latitude,
-            end_lon: day.end.longitude,
-            connection_id: null  // Could be added if available
-        }))
-    };
-    
-    try {
-        const response = await fetch('/itineraries/pubs', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(pubsRequest)
-        });
-        
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || 'Failed to load pub recommendations');
-        }
-        
-        const pubsData = await response.json();
-        currentPubRecommendations = pubsData;
-        
-        // Update the day cards with pub data
-        updateDayCardsWithPubs(pubsData.days);
-        
-        // Update button state
-        loadPubsBtn.textContent = '🍺 Pubs Loaded';
-        
-    } catch (error) {
-        console.error('Error loading pubs:', error);
-        alert(`Error loading pub recommendations: ${error.message}`);
-        loadPubsBtn.disabled = false;
-        loadPubsBtn.textContent = '🍺 Load Pub Recommendations';
-    }
-}
-
-// Update day cards with pub recommendations
-function updateDayCardsWithPubs(pubDays) {
-    for (const dayPubs of pubDays) {
-        const pubContainer = document.getElementById(`pubs-day-${dayPubs.day_number}`);
-        if (!pubContainer) continue;
-        
-        const hasPubs = dayPubs.start_pub || dayPubs.midpoint_pub || dayPubs.end_pub;
-        
-        if (hasPubs) {
-            let pubsHtml = '<h4>🍺 Recommended Pubs</h4>';
-            
-            if (dayPubs.start_pub) {
-                pubsHtml += formatPubHtml(dayPubs.start_pub, 'At Start');
-            }
-            if (dayPubs.midpoint_pub) {
-                pubsHtml += formatPubHtml(dayPubs.midpoint_pub, 'Mid-Route');
-            }
-            if (dayPubs.end_pub) {
-                pubsHtml += formatPubHtml(dayPubs.end_pub, 'At End');
-            }
-            
-            pubContainer.innerHTML = pubsHtml;
-        } else {
-            pubContainer.innerHTML = '<div class="no-pubs">No pubs with 4.2+ rating found nearby</div>';
-        }
     }
 }
 
@@ -831,8 +738,14 @@ function handleCloseMap() {
 
 // Handle generate new
 function handleGenerateNew() {
+    // Save region selection before reset
+    const savedRegion = regionSelect.value;
+    
     // Reset form
     form.reset();
+    
+    // Restore region and set defaults
+    regionSelect.value = savedRegion || 'cornwall';
     daysInput.value = 3;
     preferAccommodationCheckbox.checked = true;
     anyStartWaypointCheckbox.checked = false;
@@ -845,7 +758,6 @@ function handleGenerateNew() {
     // Clear state
     currentItinerary = null;
     currentRequestParams = null;
-    currentPubRecommendations = null;
     
     // Reset feedback state
     feedbackRating = 0;
@@ -853,12 +765,6 @@ function handleGenerateNew() {
     if (rateRouteBtn) {
         rateRouteBtn.disabled = false;
         rateRouteBtn.textContent = 'Rate This Route';
-    }
-    
-    // Reset load pubs button
-    if (loadPubsBtn) {
-        loadPubsBtn.disabled = false;
-        loadPubsBtn.textContent = 'Load Pub Recommendations';
     }
     
     // Clear map layers
@@ -878,7 +784,8 @@ function handleGenerateNew() {
     }
     
     // Show form
-    document.getElementById('form-section').scrollIntoView({ behavior: 'smooth' });
+    formSection.style.display = 'block';
+    formSection.scrollIntoView({ behavior: 'smooth' });
 }
 
 // ===== FEEDBACK FUNCTIONS =====

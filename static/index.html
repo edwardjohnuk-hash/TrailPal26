@@ -16,39 +16,37 @@
 
         <div id="form-section" class="form-section">
             <form id="itinerary-form">
-                <div class="form-group">
-                    <label for="region">Region:</label>
-                    <select id="region" name="region" required>
-                        <option value="">Loading regions...</option>
-                    </select>
-                </div>
-
-                <div class="form-group">
-                    <label for="days">Number of Days:</label>
-                    <input type="number" id="days" name="days" min="1" max="14" value="3" required>
-                </div>
-
-                <div class="form-group">
-                    <label for="start-waypoint">Start Waypoint:</label>
-                    <div class="autocomplete-container">
-                        <input type="text" id="start-waypoint" name="start-waypoint" placeholder="Type to search waypoints..." autocomplete="off">
-                        <div id="waypoint-suggestions" class="autocomplete-suggestions"></div>
+                <div class="form-row">
+                    <div class="form-group form-group-small">
+                        <label for="region">Region</label>
+                        <select id="region" name="region" required>
+                            <option value="">Loading regions...</option>
+                        </select>
                     </div>
-                    <small style="color: #7f8c8d; font-size: 0.9em;">Select a starting waypoint to generate a 3-day itinerary</small>
+
+                    <div class="form-group form-group-small">
+                        <label for="days">Days</label>
+                        <input type="number" id="days" name="days" min="1" max="14" value="3" required>
+                    </div>
+
+                    <div class="form-group form-group-medium">
+                        <label for="start-waypoint">Start Waypoint</label>
+                        <div class="autocomplete-container">
+                            <input type="text" id="start-waypoint" name="start-waypoint" placeholder="Type to search..." autocomplete="off">
+                            <div id="waypoint-suggestions" class="autocomplete-suggestions"></div>
+                        </div>
+                    </div>
                 </div>
 
-                <div class="form-group">
-                    <label>
+                <div class="form-row form-row-options">
+                    <label class="checkbox-label">
                         <input type="checkbox" id="any-start-waypoint" name="any-start-waypoint">
-                        Start from any waypoint (including accommodations)
+                        <span>Include accommodations in start options</span>
                     </label>
-                    <small style="color: #7f8c8d; font-size: 0.85em; display: block; margin-top: 4px;">By default, only train stations and towns are shown</small>
-                </div>
 
-                <div class="form-group">
-                    <label>
+                    <label class="checkbox-label">
                         <input type="checkbox" id="prefer-accommodation" name="prefer-accommodation" checked>
-                        Prefer waypoints with accommodation
+                        <span>Prefer stops with accommodation</span>
                     </label>
                 </div>
 
@@ -70,11 +68,10 @@
             <div id="days-list" class="days-list"></div>
 
             <div class="actions">
+                <button id="generate-new-btn" class="btn-secondary">← Back</button>
                 <button id="download-gpx-btn" class="btn-primary">Download GPX</button>
                 <button id="view-map-btn" class="btn-primary">View Map</button>
-                <button id="load-pubs-btn" class="btn-pub">Load Pub Recommendations</button>
-                <button id="rate-route-btn" class="btn-feedback">Rate This Route</button>
-                <button id="generate-new-btn" class="btn-secondary">Generate New Itinerary</button>
+                <button id="rate-route-btn" class="btn-primary">Rate Route</button>
             </div>
 
             <!-- Feedback Section -->
