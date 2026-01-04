@@ -155,19 +155,21 @@ class GooglePlacesClient:
             response = await self._client.post(url, json=payload, headers=headers)
             response.raise_for_status()
             data = response.json()
+            logger.info(f"Google Places API returned {len(data.get('places', []))} places near ({lat}, {lon})")
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 429:
                 logger.warning("Google Places API rate limit exceeded")
             else:
-                logger.error(f"Google Places API request failed: {e}")
-                if e.response.status_code == 400:
-                    logger.error(f"Response body: {e.response.text}")
+                logger.error(f"Google Places API request failed: {e.response.status_code}")
+                logger.error(f"Response body: {e.response.text}")
             return []
         except Exception as e:
             logger.error(f"Failed to search Google Places API: {e}")
             return []
 
-        return self._parse_nearby_response(data, min_rating)
+        results = self._parse_nearby_response(data, min_rating)
+        logger.info(f"After filtering: {len(results)} pubs with rating >= {min_rating}")
+        return results
 
     def _parse_nearby_response(
         self, data: dict, min_rating: float
@@ -210,16 +212,18 @@ class GooglePlacesClient:
             # Extract types
             types = place.get("types", [])
 
-            # Check if it's actually a pub/bar
-            # Filter for bars or restaurants that serve alcohol
-            is_pub = (
-                "bar" in types
-                or ("restaurant" in types and any(
-                    t in types for t in ["bar", "pub", "tavern", "brewery"]
-                ))
-            )
+            # Check if it's a pub, bar, or restaurant
+            # We're searching for bars/restaurants, so any result is potentially valid
+            # Google Places types include: bar, restaurant, pub, cafe, etc.
+            pub_types = {"bar", "pub", "restaurant", "tavern", "brewery", "wine_bar", "night_club"}
+            is_valid = any(t in pub_types for t in types)
 
-            if not is_pub:
+            # If no recognized types, still accept if it has a good rating (API returned it for bar/restaurant search)
+            if not is_valid and not types:
+                is_valid = True  # Accept if types list is empty (rare edge case)
+
+            if not is_valid:
+                logger.debug(f"Skipping place '{name}' - types {types} don't match pub criteria")
                 continue
 
             # Extract user ratings total

@@ -170,6 +170,7 @@ class PubRecommenderService:
         Returns:
             PubRecommendation or None if no pubs with 4.2+ rating found.
         """
+        logger.info(f"Searching for pubs near ({lat}, {lon}) with radius {self.SEARCH_RADIUS_M}m")
         pubs = await client.search_nearby_pubs(
             lat=lat,
             lon=lon,
@@ -177,7 +178,12 @@ class PubRecommenderService:
             min_rating=self.MIN_RATING,
         )
 
-        return self._select_best_pub(pubs, lat, lon)
+        best_pub = self._select_best_pub(pubs, lat, lon)
+        if best_pub:
+            logger.info(f"Found pub: {best_pub.name} (rating: {best_pub.rating})")
+        else:
+            logger.info(f"No pubs found at ({lat}, {lon}) meeting criteria")
+        return best_pub
 
     async def get_recommendations_for_day(
         self,

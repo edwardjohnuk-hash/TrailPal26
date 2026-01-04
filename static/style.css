@@ -249,6 +249,61 @@ button:disabled {
     color: #666;
 }
 
+.pub-recommendations {
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px solid #eee;
+}
+
+.pub-recommendations h4 {
+    font-size: 14px;
+    color: #8B4513;
+    margin-bottom: 12px;
+}
+
+.pub-item {
+    background: linear-gradient(135deg, #fdf6e3 0%, #f5efe0 100%);
+    padding: 12px 15px;
+    border-radius: 6px;
+    margin-bottom: 10px;
+    border-left: 3px solid #D4A84B;
+}
+
+.pub-item:last-child {
+    margin-bottom: 0;
+}
+
+.pub-location {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #8B7355;
+    margin-bottom: 4px;
+    font-weight: 600;
+}
+
+.pub-name {
+    font-size: 15px;
+    font-weight: 600;
+    color: #5D4037;
+    margin-bottom: 6px;
+}
+
+.pub-details {
+    display: flex;
+    gap: 15px;
+    font-size: 13px;
+}
+
+.pub-rating {
+    color: #D4A84B;
+    font-weight: 500;
+}
+
+.pub-distance {
+    color: #8B7355;
+}
+
 .actions {
     display: flex;
     gap: 10px;

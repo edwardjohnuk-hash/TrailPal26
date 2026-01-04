@@ -746,12 +746,20 @@ async def generate_itineraries(
             for day in first_itinerary.days
         ]
 
+        logger.info(f"Fetching pub recommendations for {len(days_data)} days")
         try:
             pub_service = PubRecommenderService(db=db)
             pub_recs = await pub_service.get_recommendations_for_itinerary(days_data)
             pub_recommendations_by_day = {rec.day_number: rec for rec in pub_recs}
+            
+            # Log what we found
+            total_pubs = sum(
+                (1 if r.start_pub else 0) + (1 if r.end_pub else 0) + (1 if r.midpoint_pub else 0)
+                for r in pub_recs
+            )
+            logger.info(f"Found {total_pubs} pub recommendations across {len(pub_recs)} days")
         except Exception as e:
-            logger.warning(f"Failed to get pub recommendations: {e}")
+            logger.exception(f"Failed to get pub recommendations: {e}")
             # Continue without pub recommendations
 
     def _pub_to_response(pub: PubRecommendation) -> PubRecommendationResponse:
