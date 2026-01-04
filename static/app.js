@@ -133,6 +133,11 @@ async function loadRegions() {
             option.textContent = `${region.name} (${region.country})`;
             regionSelect.appendChild(option);
         });
+        
+        // Auto-select if there's only one region
+        if (regions.length === 1) {
+            regionSelect.value = regions[0].name;
+        }
     } catch (error) {
         console.error('Error loading regions:', error);
         regionSelect.innerHTML = '<option value="">Error loading regions</option>';
