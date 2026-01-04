@@ -40,7 +40,7 @@ RUN chown -R appuser:appuser /app
 USER appuser
 
 # Expose the API port (Railway uses dynamic PORT env var)
-EXPOSE 8000
+EXPOSE 8080
 
 # Run migrations and start the API server
 CMD ["./start.sh"]
