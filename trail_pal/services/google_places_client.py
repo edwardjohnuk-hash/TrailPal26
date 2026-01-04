@@ -141,13 +141,18 @@ class GooglePlacesClient:
                         "latitude": lat,
                         "longitude": lon,
                     },
-                    "radius": f"{radius_m}m",
+                    "radius": float(radius_m),
                 }
             },
         }
 
+        # Use field mask to request only needed fields (reduces API cost)
+        headers = {
+            "X-Goog-FieldMask": "places.id,places.displayName,places.location,places.rating,places.userRatingCount,places.types"
+        }
+
         try:
-            response = await self._client.post(url, json=payload)
+            response = await self._client.post(url, json=payload, headers=headers)
             response.raise_for_status()
             data = response.json()
         except httpx.HTTPStatusError as e:

@@ -25,6 +25,7 @@ from trail_pal.algorithm.itinerary_generator import (
 from trail_pal.config import get_settings
 from trail_pal.db.database import SessionLocal
 from trail_pal.db.models import Connection, Region, Waypoint
+from trail_pal.services.pub_recommender import PubRecommenderService, PubRecommendation
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -94,6 +95,18 @@ class SurfaceStatsResponse(BaseModel):
     total_distance_km: float = 0.0
 
 
+class PubRecommendationResponse(BaseModel):
+    """A pub recommendation for a location along the hike."""
+
+    name: str = Field(..., description="Name of the pub")
+    rating: float = Field(..., description="Google rating (4.2+)")
+    latitude: float = Field(..., description="Pub latitude")
+    longitude: float = Field(..., description="Pub longitude")
+    place_id: str = Field(..., description="Google Place ID")
+    distance_m: float = Field(..., description="Distance from the waypoint/midpoint in meters")
+    user_ratings_total: Optional[int] = Field(None, description="Total number of ratings")
+
+
 class DayRouteResponse(BaseModel):
     """A single day's hiking route."""
 
@@ -105,6 +118,15 @@ class DayRouteResponse(BaseModel):
     elevation_gain_m: Optional[float] = None
     elevation_loss_m: Optional[float] = None
     surface_stats: Optional[SurfaceStatsResponse] = None
+    start_pub: Optional[PubRecommendationResponse] = Field(
+        None, description="Recommended pub near start waypoint (4.2+ rating)"
+    )
+    end_pub: Optional[PubRecommendationResponse] = Field(
+        None, description="Recommended pub near end waypoint (4.2+ rating)"
+    )
+    midpoint_pub: Optional[PubRecommendationResponse] = Field(
+        None, description="Recommended pub near route midpoint (4.2+ rating)"
+    )
 
 
 class ItineraryResponse(BaseModel):
@@ -136,6 +158,10 @@ class GenerateRequest(BaseModel):
     randomize: bool = Field(
         default=True,
         description="Return random itinerary combinations (set False for consistent top-scored results)",
+    )
+    allow_any_start: bool = Field(
+        default=False,
+        description="Allow any waypoint type as start/end (not just train stations/towns)",
     )
 
 
@@ -485,13 +511,17 @@ async def search_waypoints(
     name: str,
     q: str = Query(..., description="Search query (waypoint name)"),
     limit: int = Query(10, ge=1, le=50, description="Maximum results"),
+    include_all: bool = Query(
+        False, description="Include all waypoint types (not just train stations/towns)"
+    ),
     db: Session = Depends(get_db),
     _api_key: str = Depends(optional_api_key),
 ):
     """Search waypoints in a region by name (for autocomplete).
 
     Returns waypoints whose names contain the search query (case-insensitive).
-    Only returns villages, towns, cities, viewpoints, and peaks (not accommodation).
+    By default, only returns train stations and towns (suitable for starting points).
+    Set include_all=true to return all waypoint types.
     Results are limited and sorted by name.
     """
     from trail_pal.db.models import WaypointType
@@ -506,25 +536,35 @@ async def search_waypoints(
             detail=f"Region not found: {name}",
         )
 
-    # Build query with name search (case-insensitive) and filter by waypoint type
-    # Only include: villages, towns, cities, viewpoints, peaks
+    # Build query with name search (case-insensitive)
     search_term = f"%{q.lower()}%"
-    stmt = (
-        select(Waypoint)
-        .where(
-            Waypoint.region_id == region.id,
-            func.lower(Waypoint.name).like(search_term),
-            Waypoint.waypoint_type.in_([
-                WaypointType.VILLAGE,
-                WaypointType.TOWN,
-                WaypointType.CITY,
-                WaypointType.VIEWPOINT,
-                WaypointType.PEAK,
-            ])
+    
+    if include_all:
+        # Return all waypoint types
+        stmt = (
+            select(Waypoint)
+            .where(
+                Waypoint.region_id == region.id,
+                func.lower(Waypoint.name).like(search_term),
+            )
+            .order_by(Waypoint.name)
+            .limit(limit)
         )
-        .order_by(Waypoint.name)
-        .limit(limit)
-    )
+    else:
+        # Default: only train stations and towns (suitable for starting points)
+        stmt = (
+            select(Waypoint)
+            .where(
+                Waypoint.region_id == region.id,
+                func.lower(Waypoint.name).like(search_term),
+                Waypoint.waypoint_type.in_([
+                    WaypointType.TRAIN_STATION,
+                    WaypointType.TOWN,
+                ])
+            )
+            .order_by(Waypoint.name)
+            .limit(limit)
+        )
     
     waypoints = list(db.execute(stmt).scalars().all())
 
@@ -664,6 +704,7 @@ async def generate_itineraries(
         prefer_accommodation=request.prefer_accommodation,
         max_results=request.max_results,
         randomize=request.randomize,
+        allow_any_start=request.allow_any_start,
     )
 
     # Generate itineraries
@@ -688,9 +729,46 @@ async def generate_itineraries(
             detail="No itineraries found. Ensure waypoints and connections exist for this region.",
         )
 
+    # Get pub recommendations for the first itinerary (to avoid too many API calls)
+    # Build day data for pub recommendations
+    pub_recommendations_by_day = {}
+    if itineraries:
+        first_itinerary = itineraries[0]
+        days_data = [
+            {
+                "day_number": day.day_number,
+                "start_lat": day.start_waypoint.latitude,
+                "start_lon": day.start_waypoint.longitude,
+                "end_lat": day.end_waypoint.latitude,
+                "end_lon": day.end_waypoint.longitude,
+                "connection_id": day.connection_id,
+            }
+            for day in first_itinerary.days
+        ]
+
+        try:
+            pub_service = PubRecommenderService(db=db)
+            pub_recs = await pub_service.get_recommendations_for_itinerary(days_data)
+            pub_recommendations_by_day = {rec.day_number: rec for rec in pub_recs}
+        except Exception as e:
+            logger.warning(f"Failed to get pub recommendations: {e}")
+            # Continue without pub recommendations
+
+    def _pub_to_response(pub: PubRecommendation) -> PubRecommendationResponse:
+        """Convert a PubRecommendation to PubRecommendationResponse."""
+        return PubRecommendationResponse(
+            name=pub.name,
+            rating=pub.rating,
+            latitude=pub.latitude,
+            longitude=pub.longitude,
+            place_id=pub.place_id,
+            distance_m=pub.distance_m,
+            user_ratings_total=pub.user_ratings_total,
+        )
+
     # Convert to response models
     response_itineraries = []
-    for it in itineraries:
+    for idx, it in enumerate(itineraries):
         days = []
         for day in it.days:
             # Convert surface_stats if available
@@ -701,7 +779,21 @@ async def generate_itineraries(
                     waytypes=day.surface_stats.waytypes,
                     total_distance_km=day.surface_stats.total_distance_km,
                 )
-            
+
+            # Get pub recommendations for this day (only for first itinerary)
+            start_pub_response = None
+            end_pub_response = None
+            midpoint_pub_response = None
+
+            if idx == 0 and day.day_number in pub_recommendations_by_day:
+                day_pubs = pub_recommendations_by_day[day.day_number]
+                if day_pubs.start_pub:
+                    start_pub_response = _pub_to_response(day_pubs.start_pub)
+                if day_pubs.end_pub:
+                    end_pub_response = _pub_to_response(day_pubs.end_pub)
+                if day_pubs.midpoint_pub:
+                    midpoint_pub_response = _pub_to_response(day_pubs.midpoint_pub)
+
             days.append(
                 DayRouteResponse(
                     day_number=day.day_number,
@@ -732,6 +824,9 @@ async def generate_itineraries(
                     elevation_gain_m=day.elevation_gain_m,
                     elevation_loss_m=day.elevation_loss_m,
                     surface_stats=surface_stats_response,
+                    start_pub=start_pub_response,
+                    end_pub=end_pub_response,
+                    midpoint_pub=midpoint_pub_response,
                 )
             )
 

@@ -116,6 +116,7 @@ class ItineraryOptions:
     max_distance_km: float = 20.0
     randomize: bool = False  # If True, randomly select routes instead of top-scored
     max_overlap_km: float = 3.0  # Max allowed overlap between consecutive days
+    allow_any_start: bool = False  # If True, allow any waypoint type as start
 
 
 class ItineraryGenerator:
@@ -548,15 +549,16 @@ class ItineraryGenerator:
                 raise ValueError(
                     f"Start waypoint {options.start_waypoint_id} not in graph"
                 )
-            # Validate it's transport-accessible
-            node_data = graph.nodes[options.start_waypoint_id]
-            waypoint_type = node_data.get("waypoint_type")
-            if waypoint_type and not self._is_transport_accessible(waypoint_type):
-                raise ValueError(
-                    f"Start waypoint must be transport-accessible "
-                    f"(train station, village, town, or city), "
-                    f"got: {waypoint_type}"
-                )
+            # Validate it's transport-accessible (unless allow_any_start is True)
+            if not options.allow_any_start:
+                node_data = graph.nodes[options.start_waypoint_id]
+                waypoint_type = node_data.get("waypoint_type")
+                if waypoint_type and not self._is_transport_accessible(waypoint_type):
+                    raise ValueError(
+                        f"Start waypoint must be transport-accessible "
+                        f"(train station, village, town, or city), "
+                        f"got: {waypoint_type}"
+                    )
             return options.start_waypoint_id
 
         if options.start_waypoint_name:
@@ -564,10 +566,16 @@ class ItineraryGenerator:
             for node_id in graph.nodes:
                 node_data = graph.nodes[node_id]
                 if name_lower in node_data.get("name", "").lower():
-                    # Validate it's transport-accessible
+                    # If allow_any_start, return first match; otherwise validate transport-accessible
+                    if options.allow_any_start:
+                        return node_id
                     waypoint_type = node_data.get("waypoint_type")
                     if waypoint_type and self._is_transport_accessible(waypoint_type):
                         return node_id
+            if options.allow_any_start:
+                raise ValueError(
+                    f"No waypoint found matching name: {options.start_waypoint_name}"
+                )
             raise ValueError(
                 f"No transport-accessible waypoint found matching name: {options.start_waypoint_name}"
             )
@@ -596,30 +604,37 @@ class ItineraryGenerator:
         # Load graph
         graph = self._load_graph(region_name)
 
-        # Find starting points (must be transport-accessible)
+        # Find starting points
         start_nodes = []
         specified_start = self._find_start_waypoint(graph, options)
 
         if specified_start:
             start_nodes = [specified_start]
         else:
-            # Use transport-accessible waypoints as potential starts
-            for node_id in graph.nodes:
-                node_data = graph.nodes[node_id]
-                waypoint_type = node_data.get("waypoint_type")
-                if waypoint_type and self._is_transport_accessible(waypoint_type):
-                    start_nodes.append(node_id)
+            if options.allow_any_start:
+                # Use all waypoints as potential starts
+                start_nodes = list(graph.nodes)
+            else:
+                # Use transport-accessible waypoints as potential starts
+                for node_id in graph.nodes:
+                    node_data = graph.nodes[node_id]
+                    waypoint_type = node_data.get("waypoint_type")
+                    if waypoint_type and self._is_transport_accessible(waypoint_type):
+                        start_nodes.append(node_id)
 
-            # If no transport-accessible waypoints, log warning
+            # If no suitable waypoints, log warning
             if not start_nodes:
-                logger.warning(
-                    "No transport-accessible waypoints found. "
-                    "Ensure waypoints are seeded with train stations, villages, towns, or cities."
-                )
+                if options.allow_any_start:
+                    logger.warning("No waypoints found in the graph.")
+                else:
+                    logger.warning(
+                        "No transport-accessible waypoints found. "
+                        "Ensure waypoints are seeded with train stations, villages, towns, or cities."
+                    )
             else:
                 # Limit to a reasonable number of starting points for performance
                 # When no specific start is provided, randomly sample up to 20 starting points
-                # This prevents exponential search time when there are many transport-accessible waypoints
+                # This prevents exponential search time when there are many waypoints
                 max_start_nodes = 20
                 if len(start_nodes) > max_start_nodes:
                     total_start_nodes = len(start_nodes)
@@ -662,27 +677,35 @@ class ItineraryGenerator:
         if not all_paths:
             return []
 
-        # Filter paths to ensure end waypoint is transport-accessible
-        filtered_paths = []
-        for path in all_paths:
-            if not path:
-                continue
-            # Get the final waypoint (last day's end)
-            last_edge = path[-1]
-            final_waypoint_id = last_edge[1]  # to_id of last edge
-            final_waypoint = self._waypoints[final_waypoint_id]
-            if self._is_transport_accessible(final_waypoint.waypoint_type):
-                filtered_paths.append(path)
+        # Filter paths to ensure end waypoint is transport-accessible (unless allow_any_start)
+        if options.allow_any_start:
+            # No filtering needed - any end waypoint is acceptable
+            filtered_paths = [path for path in all_paths if path]
+            logger.info(f"Using all {len(filtered_paths)} valid paths (any end waypoint allowed)")
+        else:
+            filtered_paths = []
+            for path in all_paths:
+                if not path:
+                    continue
+                # Get the final waypoint (last day's end)
+                last_edge = path[-1]
+                final_waypoint_id = last_edge[1]  # to_id of last edge
+                final_waypoint = self._waypoints[final_waypoint_id]
+                if self._is_transport_accessible(final_waypoint.waypoint_type):
+                    filtered_paths.append(path)
 
-        logger.info(
-            f"Filtered to {len(filtered_paths)} paths with transport-accessible end waypoints"
-        )
+            logger.info(
+                f"Filtered to {len(filtered_paths)} paths with transport-accessible end waypoints"
+            )
 
         if not filtered_paths:
-            logger.warning(
-                "No paths found ending at transport-accessible waypoints. "
-                "Ensure connections exist from accommodations to transport waypoints."
-            )
+            if options.allow_any_start:
+                logger.warning("No valid paths found.")
+            else:
+                logger.warning(
+                    "No paths found ending at transport-accessible waypoints. "
+                    "Ensure connections exist from accommodations to transport waypoints."
+                )
             return []
 
         # Convert paths to itineraries

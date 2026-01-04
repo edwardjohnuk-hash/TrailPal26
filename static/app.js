@@ -10,6 +10,7 @@ const regionSelect = document.getElementById('region');
 const daysInput = document.getElementById('days');
 const startWaypointInput = document.getElementById('start-waypoint');
 const waypointSuggestions = document.getElementById('waypoint-suggestions');
+const anyStartWaypointCheckbox = document.getElementById('any-start-waypoint');
 const preferAccommodationCheckbox = document.getElementById('prefer-accommodation');
 const generateBtn = document.getElementById('generate-btn');
 const loadingDiv = document.getElementById('loading');
@@ -51,6 +52,22 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Setup autocomplete for waypoint input
     setupWaypointAutocomplete();
+    
+    // Handle "any waypoint" checkbox change - refresh suggestions
+    anyStartWaypointCheckbox.addEventListener('change', () => {
+        // Clear current selection since filter has changed
+        selectedWaypoint = null;
+        currentSuggestions = [];
+        
+        // Re-search if there's text in the input
+        const query = startWaypointInput.value.trim();
+        const region = regionSelect.value;
+        if (query && region) {
+            searchWaypoints(region, query);
+        } else {
+            hideSuggestions();
+        }
+    });
     
     // Close suggestions when clicking outside
     document.addEventListener('click', (e) => {
@@ -167,7 +184,9 @@ function handleWaypointKeydown(e) {
 // Search waypoints
 async function searchWaypoints(region, query) {
     try {
-        const response = await fetch(`/regions/${region}/waypoints/search?q=${encodeURIComponent(query)}&limit=10`);
+        // Check if "any waypoint" option is enabled
+        const includeAll = anyStartWaypointCheckbox.checked;
+        const response = await fetch(`/regions/${region}/waypoints/search?q=${encodeURIComponent(query)}&limit=10&include_all=${includeAll}`);
         if (!response.ok) {
             throw new Error('Failed to search waypoints');
         }
@@ -236,6 +255,25 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+// Format pub recommendation as HTML
+function formatPubHtml(pub, location) {
+    const stars = '★'.repeat(Math.floor(pub.rating)) + (pub.rating % 1 >= 0.5 ? '½' : '');
+    const distanceText = pub.distance_m < 1000 
+        ? `${Math.round(pub.distance_m)}m away`
+        : `${(pub.distance_m / 1000).toFixed(1)}km away`;
+    
+    return `
+        <div class="pub-item">
+            <div class="pub-location">${escapeHtml(location)}</div>
+            <div class="pub-name">${escapeHtml(pub.name)}</div>
+            <div class="pub-details">
+                <span class="pub-rating">${stars} ${pub.rating.toFixed(1)}</span>
+                <span class="pub-distance">${distanceText}</span>
+            </div>
+        </div>
+    `;
+}
+
 // Handle form submission
 async function handleFormSubmit(e) {
     e.preventDefault();
@@ -245,6 +283,7 @@ async function handleFormSubmit(e) {
     // Use selected waypoint name if available, otherwise use input value
     const startWaypoint = selectedWaypoint ? selectedWaypoint.name : (startWaypointInput.value.trim() || null);
     const preferAccommodation = preferAccommodationCheckbox.checked;
+    const allowAnyStart = anyStartWaypointCheckbox.checked;
     
     // Store request params for GPX download
     currentRequestParams = {
@@ -253,7 +292,8 @@ async function handleFormSubmit(e) {
         start_waypoint_name: startWaypoint,
         prefer_accommodation: preferAccommodation,
         max_results: 1,
-        randomize: true
+        randomize: true,
+        allow_any_start: allowAnyStart
     };
     
     // Show loading, hide errors and results
@@ -356,6 +396,25 @@ function displayItinerary(itinerary) {
         } else {
             surfaceHtml = '<div class="surface-stats"><div class="surface-item">Surface data not available</div></div>';
         }
+
+        // Build pub recommendations HTML
+        let pubsHtml = '';
+        const hasPubs = day.start_pub || day.midpoint_pub || day.end_pub;
+        if (hasPubs) {
+            pubsHtml = '<div class="pub-recommendations"><h4>🍺 Recommended Pubs</h4>';
+
+            if (day.start_pub) {
+                pubsHtml += formatPubHtml(day.start_pub, 'At Start');
+            }
+            if (day.midpoint_pub) {
+                pubsHtml += formatPubHtml(day.midpoint_pub, 'Mid-Route');
+            }
+            if (day.end_pub) {
+                pubsHtml += formatPubHtml(day.end_pub, 'At End');
+            }
+
+            pubsHtml += '</div>';
+        }
         
         dayCard.innerHTML = `
             <h3>Day ${day.day_number}</h3>
@@ -384,6 +443,7 @@ function displayItinerary(itinerary) {
                 ` : ''}
             </div>
             ${surfaceHtml}
+            ${pubsHtml}
         `;
         
         daysList.appendChild(dayCard);
@@ -660,6 +720,7 @@ function handleGenerateNew() {
     form.reset();
     daysInput.value = 3;
     preferAccommodationCheckbox.checked = true;
+    anyStartWaypointCheckbox.checked = false;
     
     // Clear autocomplete state
     selectedWaypoint = null;

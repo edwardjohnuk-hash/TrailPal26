@@ -54,3 +54,12 @@ htmlcov/
 # Alembic
 alembic/versions/__pycache__/
 
+# Large data files
+*.csv
+data_*.sql
+data_clean.sql
+
+# Test GPX files
+*.gpx
+test runs/
+

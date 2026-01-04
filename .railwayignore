@@ -1,0 +1,32 @@
+# Virtual environments
+venv/
+env/
+.venv/
+
+# Large data files
+*.csv
+*.sql
+*.gpx
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
+
+# Git
+.git/
+
+# Logs
+*.log
+
+# Test files
+test runs/
+tests/
+
+# Local files
+.env.local
+
