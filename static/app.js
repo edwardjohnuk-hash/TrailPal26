@@ -1017,7 +1017,9 @@ function buildRouteSummary() {
         num_days: currentItinerary.days.length,
         days: currentItinerary.days.map(day => ({
             day_number: day.day_number,
+            start_id: day.start.id,
             start_name: day.start.name,
+            end_id: day.end.id,
             end_name: day.end.name,
             distance_km: day.distance_km
         }))
