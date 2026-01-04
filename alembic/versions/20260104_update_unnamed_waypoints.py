@@ -32,27 +32,23 @@ def upgrade() -> None:
     conn = op.get_bind()
     
     # Get unnamed accommodations
-    accommodation_types = ['campsite', 'hostel', 'guest_house', 'hotel']
     unnamed = conn.execute(
         text("""
             SELECT id, name, waypoint_type, latitude, longitude 
             FROM waypoints 
             WHERE name LIKE 'Unnamed %' 
-            AND waypoint_type IN :types
+            AND waypoint_type IN ('campsite', 'hostel', 'guest_house', 'hotel')
             AND name NOT LIKE '%,%'
-        """),
-        {"types": tuple(accommodation_types)}
+        """)
     ).fetchall()
     
     # Get settlements
-    settlement_types = ['village', 'town', 'city']
     settlements = conn.execute(
         text("""
             SELECT name, latitude, longitude 
             FROM waypoints 
-            WHERE waypoint_type IN :types
-        """),
-        {"types": tuple(settlement_types)}
+            WHERE waypoint_type IN ('village', 'town', 'city')
+        """)
     ).fetchall()
     
     print(f"Found {len(unnamed)} unnamed accommodations and {len(settlements)} settlements")
