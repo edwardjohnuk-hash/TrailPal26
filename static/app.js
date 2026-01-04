@@ -15,7 +15,6 @@ const regionSelect = document.getElementById('region');
 const daysInput = document.getElementById('days');
 const startWaypointInput = document.getElementById('start-waypoint');
 const waypointSuggestions = document.getElementById('waypoint-suggestions');
-const anyStartWaypointCheckbox = document.getElementById('any-start-waypoint');
 const preferAccommodationCheckbox = document.getElementById('prefer-accommodation');
 const generateBtn = document.getElementById('generate-btn');
 const loadingDiv = document.getElementById('loading');
@@ -86,22 +85,6 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Setup autocomplete for waypoint input
     setupWaypointAutocomplete();
-    
-    // Handle "any waypoint" checkbox change - refresh suggestions
-    anyStartWaypointCheckbox.addEventListener('change', () => {
-        // Clear current selection since filter has changed
-        selectedWaypoint = null;
-        currentSuggestions = [];
-        
-        // Re-search if there's text in the input
-        const query = startWaypointInput.value.trim();
-        const region = regionSelect.value;
-        if (query && region) {
-            searchWaypoints(region, query);
-        } else {
-            hideSuggestions();
-        }
-    });
     
     // Close suggestions when clicking outside
     document.addEventListener('click', (e) => {
@@ -231,9 +214,8 @@ function handleWaypointKeydown(e) {
 // Search waypoints
 async function searchWaypoints(region, query) {
     try {
-        // Check if "any waypoint" option is enabled
-        const includeAll = anyStartWaypointCheckbox.checked;
-        const response = await fetch(`/regions/${region}/waypoints/search?q=${encodeURIComponent(query)}&limit=10&include_all=${includeAll}`);
+        // Always include all waypoints in search results regardless of checkbox
+        const response = await fetch(`/regions/${region}/waypoints/search?q=${encodeURIComponent(query)}&limit=10&include_all=true`);
         if (!response.ok) {
             throw new Error('Failed to search waypoints');
         }
@@ -311,7 +293,10 @@ async function handleFormSubmit(e) {
     // Use selected waypoint name if available, otherwise use input value
     const startWaypoint = selectedWaypoint ? selectedWaypoint.name : (startWaypointInput.value.trim() || null);
     const preferAccommodation = preferAccommodationCheckbox.checked;
-    const allowAnyStart = anyStartWaypointCheckbox.checked;
+    
+    // If user explicitly provided a waypoint name (selected or typed), allow any waypoint type
+    // Otherwise, default to train stations/towns (allow_any_start: false)
+    const allowAnyStart = startWaypoint !== null;
     
     // Store request params for GPX download
     currentRequestParams = {
@@ -748,7 +733,6 @@ function handleGenerateNew() {
     regionSelect.value = savedRegion || 'cornwall';
     daysInput.value = 3;
     preferAccommodationCheckbox.checked = true;
-    anyStartWaypointCheckbox.checked = false;
     
     // Clear autocomplete state
     selectedWaypoint = null;
