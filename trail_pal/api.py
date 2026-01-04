@@ -356,11 +356,12 @@ async def warmup_graph_cache():
             finally:
                 db.close()
             
-            # Pre-load graph for each region
+            # Pre-load graph for each region (just load the graph, don't generate itineraries)
             for region_name in region_names:
                 try:
-                    options = ItineraryOptions(num_days=1, max_results=1)
-                    generator.generate(region_name, options)
+                    # Directly load the graph to populate cache without generating itineraries
+                    # This avoids "no paths found" warnings during startup
+                    generator._load_graph(region_name)
                     logger.info(f"Graph cache warmed for region: {region_name}")
                 except Exception as e:
                     logger.warning(f"Failed to warm cache for {region_name}: {e}")
