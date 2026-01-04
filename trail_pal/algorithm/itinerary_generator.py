@@ -24,6 +24,11 @@ logger = logging.getLogger(__name__)
 _graph_cache: dict[str, tuple[nx.DiGraph, dict, dict, float]] = {}
 _CACHE_TTL_SECONDS = 300  # 5 minute cache TTL
 
+# Maximum allowed way type percentages (based on average across all routes)
+# Routes with higher percentages will be filtered out
+MAX_ROAD_PERCENTAGE = 24.7  # Average road percentage across all routes
+MAX_STREET_PERCENTAGE = 11.2  # Average street percentage across all routes
+
 
 @dataclass
 class SurfaceStats:
@@ -399,6 +404,54 @@ class ItineraryGenerator:
 
         return score
 
+    def _calculate_itinerary_waytype_percentages(
+        self, days: list[DayRoute]
+    ) -> dict[str, float]:
+        """Calculate overall way type percentages for an itinerary.
+
+        Aggregates surface stats from all days to compute total percentages.
+
+        Args:
+            days: List of day routes.
+
+        Returns:
+            Dictionary mapping way type to percentage of total distance.
+        """
+        total_distance = 0.0
+        waytype_totals: dict[str, float] = {}
+
+        for day in days:
+            if day.surface_stats:
+                total_distance += day.surface_stats.total_distance_km
+                for waytype, distance in day.surface_stats.waytypes.items():
+                    waytype_totals[waytype] = waytype_totals.get(waytype, 0) + distance
+
+        if total_distance == 0:
+            return {}
+
+        return {
+            waytype: (distance / total_distance) * 100
+            for waytype, distance in waytype_totals.items()
+        }
+
+    def _itinerary_exceeds_road_street_thresholds(
+        self, days: list[DayRoute]
+    ) -> bool:
+        """Check if an itinerary exceeds road/street way type thresholds.
+
+        Args:
+            days: List of day routes.
+
+        Returns:
+            True if the itinerary exceeds the maximum allowed road or street percentage.
+        """
+        percentages = self._calculate_itinerary_waytype_percentages(days)
+        
+        road_pct = percentages.get("road", 0)
+        street_pct = percentages.get("street", 0)
+
+        return road_pct > MAX_ROAD_PERCENTAGE or street_pct > MAX_STREET_PERCENTAGE
+
     def _score_itinerary(
         self, days: list[DayRoute], options: ItineraryOptions
     ) -> float:
@@ -711,6 +764,7 @@ class ItineraryGenerator:
 
         # Convert paths to itineraries
         itineraries = []
+        filtered_out_road_street = 0
         for path in filtered_paths:
             days = []
             for i, (from_id, to_id, edge_data) in enumerate(path):
@@ -732,6 +786,11 @@ class ItineraryGenerator:
                 )
                 days.append(day)
 
+            # Filter out itineraries with too much road/street
+            if self._itinerary_exceeds_road_street_thresholds(days):
+                filtered_out_road_street += 1
+                continue
+
             itinerary = Itinerary(
                 id=uuid.uuid4(),
                 region_name=region_name,
@@ -739,6 +798,12 @@ class ItineraryGenerator:
             )
             itinerary.score = self._score_itinerary(days, options)
             itineraries.append(itinerary)
+
+        if filtered_out_road_street > 0:
+            logger.info(
+                f"Filtered out {filtered_out_road_street} itineraries with road/street "
+                f"percentage above thresholds (road>{MAX_ROAD_PERCENTAGE}%, street>{MAX_STREET_PERCENTAGE}%)"
+            )
 
         # Select itineraries based on options
         if options.randomize:
