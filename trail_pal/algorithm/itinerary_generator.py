@@ -333,19 +333,20 @@ class ItineraryGenerator:
         return self._overlaps.get((connection_a_id, connection_b_id), 0.0)
 
     def _is_transport_accessible(self, waypoint_type: str) -> bool:
-        """Check if a waypoint type is suitable for start/end positions.
+        """Check if a waypoint type is suitable for default start/end positions.
+
+        By default, only train stations and towns are considered valid
+        starting/ending points for itineraries.
 
         Args:
             waypoint_type: Waypoint type string.
 
         Returns:
-            True if waypoint type is transport-accessible.
+            True if waypoint type is transport-accessible (train station or town).
         """
         return waypoint_type in [
             WaypointType.TRAIN_STATION,
-            WaypointType.VILLAGE,
             WaypointType.TOWN,
-            WaypointType.CITY,
         ]
 
     def _score_waypoint(
