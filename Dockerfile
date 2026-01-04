@@ -1,4 +1,5 @@
 # Trail Pal API - Production Dockerfile
+# Build: 2026-01-04
 FROM python:3.11-slim
 
 # Set environment variables
