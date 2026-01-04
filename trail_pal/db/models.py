@@ -116,6 +116,10 @@ class Waypoint(Base):
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )
 
+    # Pub proximity indicators (populated by pub finder)
+    near_pub: Mapped[bool] = mapped_column(Boolean, default=False)
+    nearby_pub_count: Mapped[int] = mapped_column(Integer, default=0)
+
     # Relationships
     region: Mapped["Region"] = relationship("Region", back_populates="waypoints")
     connections_from: Mapped[list["Connection"]] = relationship(

@@ -7,3 +7,4 @@ alembic upgrade head
 echo "Starting API server..."
 exec uvicorn trail_pal.api:app --host 0.0.0.0 --port ${PORT:-8000}
 
+

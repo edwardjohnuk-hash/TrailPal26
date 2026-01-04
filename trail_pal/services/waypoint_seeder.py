@@ -120,6 +120,8 @@ class WaypointSeeder:
             has_accommodation=element.has_accommodation,
             has_water=element.has_water,
             has_food=element.has_food,
+            near_pub=False,
+            nearby_pub_count=0,
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow(),
         )

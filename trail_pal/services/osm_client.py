@@ -207,7 +207,22 @@ out center;
                 continue
 
             # Get name (fallback to type if no name)
-            name = tags.get("name", f"Unnamed {waypoint_type}")
+            name = tags.get("name")
+            if not name:
+                # Build a more descriptive name for unnamed accommodations
+                name = f"Unnamed {waypoint_type}"
+                # Try to add location context from address tags
+                location_name = (
+                    tags.get("addr:city")
+                    or tags.get("addr:town")
+                    or tags.get("addr:village")
+                    or tags.get("addr:hamlet")
+                    or tags.get("is_in")
+                )
+                if location_name:
+                    # Clean up is_in format (often comma-separated list)
+                    location_name = location_name.split(",")[0].strip()
+                    name = f"{name}, {location_name}"
 
             # Determine amenities
             has_accommodation = waypoint_type in [
