@@ -23,6 +23,13 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from trail_pal.db.database import Base
 
 
+class RoutingMode:
+    """Constants for region routing modes."""
+
+    PRECOMPUTED = "precomputed"  # Uses pre-built connection graph (Cornwall-style)
+    ON_THE_FLY = "on_the_fly"  # Fetches routes on demand (Lake District experiment)
+
+
 class Region(Base):
     """A geographic region for hiking itineraries (e.g., Cornwall, England)."""
 
@@ -34,6 +41,11 @@ class Region(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     country: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Routing mode: 'precomputed' (default) or 'on_the_fly'
+    routing_mode: Mapped[str] = mapped_column(
+        String(50), nullable=False, default=RoutingMode.PRECOMPUTED
+    )
 
     # Bounding box as a polygon geometry
     bounds = mapped_column(Geometry("POLYGON", srid=4326), nullable=False)

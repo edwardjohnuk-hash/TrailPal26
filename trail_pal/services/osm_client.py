@@ -53,6 +53,12 @@ REGION_BOUNDS = {
         north=50.75,
         east=-4.15,
     ),
+    "lake_district": BoundingBox(
+        south=54.20,
+        west=-3.50,
+        north=54.70,
+        east=-2.70,
+    ),
 }
 
 

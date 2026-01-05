@@ -22,6 +22,8 @@ from trail_pal.algorithm.itinerary_generator import (
     ItineraryGenerator,
     ItineraryOptions,
 )
+from trail_pal.algorithm.onthefly_generator import OnTheFlyGenerator
+from trail_pal.db.models import RoutingMode
 from trail_pal.config import get_settings
 from trail_pal.db.database import SessionLocal
 from trail_pal.db.models import Connection, Region, RouteFeedback, Waypoint
@@ -75,6 +77,10 @@ class RegionStatsResponse(BaseModel):
 
     region: str
     country: str
+    routing_mode: str = Field(
+        default="precomputed",
+        description="Routing mode: 'precomputed' uses cached graph, 'on_the_fly' fetches routes on demand"
+    )
     total_waypoints: int
     total_connections: int
     feasible_connections: int
@@ -392,6 +398,7 @@ async def warmup_graph_cache():
     
     This avoids a 15-20 second delay on the first itinerary request
     by loading the 1.4M+ overlap records into memory at startup.
+    Only warms cache for regions with precomputed routing mode.
     """
     import asyncio
     
@@ -406,19 +413,24 @@ async def warmup_graph_cache():
             try:
                 stmt = select(Region)
                 regions = list(db.execute(stmt).scalars().all())
-                region_names = [r.name for r in regions]
             finally:
                 db.close()
             
-            # Pre-load graph for each region (just load the graph, don't generate itineraries)
-            for region_name in region_names:
+            # Pre-load graph for each precomputed region
+            for region in regions:
+                routing_mode = getattr(region, 'routing_mode', RoutingMode.PRECOMPUTED)
+                
+                if routing_mode == RoutingMode.ON_THE_FLY:
+                    logger.info(f"Skipping cache warmup for on-the-fly region: {region.name}")
+                    continue
+                
                 try:
                     # Directly load the graph to populate cache without generating itineraries
                     # This avoids "no paths found" warnings during startup
-                    generator._load_graph(region_name)
-                    logger.info(f"Graph cache warmed for region: {region_name}")
+                    generator._load_graph(region.name)
+                    logger.info(f"Graph cache warmed for region: {region.name}")
                 except Exception as e:
-                    logger.warning(f"Failed to warm cache for {region_name}: {e}")
+                    logger.warning(f"Failed to warm cache for {region.name}: {e}")
             
             generator.close()
             logger.info("Graph cache warmup complete")
@@ -712,6 +724,7 @@ async def get_region_stats(
     return RegionStatsResponse(
         region=region.name,
         country=region.country,
+        routing_mode=getattr(region, 'routing_mode', RoutingMode.PRECOMPUTED),
         total_waypoints=total_waypoints,
         total_connections=total_connections,
         feasible_connections=feasible_connections,
@@ -762,10 +775,19 @@ async def generate_itineraries(
         allow_any_start=request.allow_any_start,
     )
 
-    # Generate itineraries
+    # Generate itineraries using appropriate generator based on routing mode
     try:
-        generator = ItineraryGenerator(db=db)
-        itineraries = generator.generate(request.region, options)
+        routing_mode = getattr(region, 'routing_mode', RoutingMode.PRECOMPUTED)
+        
+        if routing_mode == RoutingMode.ON_THE_FLY:
+            # Use on-the-fly generator for regions without precomputed graphs
+            logger.info(f"Using on-the-fly generator for region: {request.region}")
+            generator = OnTheFlyGenerator(db=db, persist_routes=True)
+            itineraries = await generator.generate(request.region, options)
+        else:
+            # Use precomputed graph generator (default)
+            generator = ItineraryGenerator(db=db)
+            itineraries = generator.generate(request.region, options)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

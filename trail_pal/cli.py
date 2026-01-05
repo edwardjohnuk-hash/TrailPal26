@@ -15,10 +15,13 @@ from trail_pal.algorithm.itinerary_generator import (
     ItineraryGenerator,
     ItineraryOptions,
 )
-from trail_pal.db.database import init_db
+from trail_pal.algorithm.onthefly_generator import OnTheFlyGenerator
+from trail_pal.db.database import init_db, SessionLocal
+from trail_pal.db.models import Region, RoutingMode
 from trail_pal.services.graph_builder import GraphBuilder
 from trail_pal.services.overlap_analyzer import OverlapAnalyzer
 from trail_pal.services.waypoint_seeder import WaypointSeeder, list_available_regions
+from sqlalchemy import select
 
 # Configure logging
 logging.basicConfig(
@@ -313,12 +316,34 @@ def generate(
     )
 
     try:
-        generator = ItineraryGenerator()
-        itineraries = generator.generate(region, options)
+        # Check region routing mode
+        db = SessionLocal()
+        try:
+            stmt = select(Region).where(Region.name == region.lower())
+            region_obj = db.execute(stmt).scalar_one_or_none()
+            if not region_obj:
+                click.echo(f"Region not found: {region}", err=True)
+                click.echo("Make sure to run 'seed' first.")
+                sys.exit(1)
+            routing_mode = getattr(region_obj, 'routing_mode', RoutingMode.PRECOMPUTED)
+        finally:
+            db.close()
+
+        # Use appropriate generator based on routing mode
+        if routing_mode == RoutingMode.ON_THE_FLY:
+            click.echo(f"[Using on-the-fly routing mode]")
+            generator = OnTheFlyGenerator()
+            itineraries = asyncio.run(generator.generate(region, options))
+        else:
+            generator = ItineraryGenerator()
+            itineraries = generator.generate(region, options)
 
         if not itineraries:
             click.echo("\nNo itineraries found.")
-            click.echo("Make sure to run 'seed' and 'build-graph' first.")
+            if routing_mode == RoutingMode.PRECOMPUTED:
+                click.echo("Make sure to run 'seed' and 'build-graph' first.")
+            else:
+                click.echo("Make sure to run 'seed' first and check ORS API key is set.")
             return
 
         click.echo(f"\nFound {len(itineraries)} itineraries:\n")
@@ -327,7 +352,10 @@ def generate(
             click.echo(f"{'=' * 50}")
             click.echo(f"Option {i} (Score: {itinerary.score:.1f})")
             click.echo(f"{'=' * 50}")
-            click.echo(generator.format_itinerary(itinerary, show_surfaces=show_surfaces))
+            # Use ItineraryGenerator's format_itinerary for consistent output
+            fmt_generator = ItineraryGenerator()
+            click.echo(fmt_generator.format_itinerary(itinerary, show_surfaces=show_surfaces))
+            fmt_generator.close()
 
         generator.close()
 
@@ -405,8 +433,26 @@ def export(
     )
 
     try:
-        generator = ItineraryGenerator()
-        itineraries = generator.generate(region, options)
+        # Check region routing mode
+        db = SessionLocal()
+        try:
+            stmt = select(Region).where(Region.name == region.lower())
+            region_obj = db.execute(stmt).scalar_one_or_none()
+            if not region_obj:
+                click.echo(f"Region not found: {region}", err=True)
+                sys.exit(1)
+            routing_mode = getattr(region_obj, 'routing_mode', RoutingMode.PRECOMPUTED)
+        finally:
+            db.close()
+
+        # Use appropriate generator based on routing mode
+        if routing_mode == RoutingMode.ON_THE_FLY:
+            click.echo(f"[Using on-the-fly routing mode]")
+            generator = OnTheFlyGenerator()
+            itineraries = asyncio.run(generator.generate(region, options))
+        else:
+            generator = ItineraryGenerator()
+            itineraries = generator.generate(region, options)
 
         if not itineraries:
             click.echo("No itineraries found.", err=True)

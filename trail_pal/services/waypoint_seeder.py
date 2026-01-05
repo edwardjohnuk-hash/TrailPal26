@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from trail_pal.db.database import SessionLocal
-from trail_pal.db.models import Region, Waypoint
+from trail_pal.db.models import Region, RoutingMode, Waypoint
 from trail_pal.services.osm_client import (
     OSMElement,
     OverpassClient,
@@ -75,11 +75,27 @@ class WaypointSeeder:
         # Create bounding box polygon
         bbox_polygon = box(bounds.west, bounds.south, bounds.east, bounds.north)
 
+        # Determine country based on region
+        region_countries = {
+            "cornwall": "England",
+            "lake_district": "England",
+        }
+        country = region_countries.get(region_key, "Unknown")
+        
+        # Determine routing mode based on region
+        # Cornwall uses precomputed graph, Lake District uses on-the-fly routing
+        region_routing_modes = {
+            "cornwall": RoutingMode.PRECOMPUTED,
+            "lake_district": RoutingMode.ON_THE_FLY,
+        }
+        routing_mode = region_routing_modes.get(region_key, RoutingMode.ON_THE_FLY)
+        
         region = Region(
             id=uuid.uuid4(),
             name=region_key,
-            country="England" if region_key == "cornwall" else "Unknown",
+            country=country,
             description=f"Hiking region: {region_name.title()}",
+            routing_mode=routing_mode,
             bounds=from_shape(bbox_polygon, srid=4326),
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow(),
