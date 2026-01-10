@@ -23,16 +23,12 @@ const resultsSection = document.getElementById('results-section');
 const itinerarySummary = document.getElementById('itinerary-summary');
 const daysList = document.getElementById('days-list');
 const downloadGpxBtn = document.getElementById('download-gpx-btn');
-const viewMapBtn = document.getElementById('view-map-btn');
 const generateNewBtn = document.getElementById('generate-new-btn');
 const mapSection = document.getElementById('map-section');
 const mapContainer = document.getElementById('map');
-const closeMapBtn = document.getElementById('close-map-btn');
 
 // Feedback DOM elements
-const rateRouteBtn = document.getElementById('rate-route-btn');
 const feedbackSection = document.getElementById('feedback-section');
-const closeFeedbackBtn = document.getElementById('close-feedback-btn');
 const feedbackStep1 = document.getElementById('feedback-step-1');
 const feedbackStep2 = document.getElementById('feedback-step-2');
 const feedbackStep3 = document.getElementById('feedback-step-3');
@@ -52,25 +48,7 @@ document.addEventListener('DOMContentLoaded', () => {
     form.addEventListener('submit', handleFormSubmit);
     downloadGpxBtn.addEventListener('click', handleDownloadGpx);
     
-    // Check if view map button exists before adding listener
-    if (viewMapBtn) {
-        viewMapBtn.addEventListener('click', handleViewMap);
-        console.log('View Map button event listener attached');
-    } else {
-        console.error('View Map button not found in DOM');
-    }
-    
-    if (closeMapBtn) {
-        closeMapBtn.addEventListener('click', handleCloseMap);
-    }
-    
     // Feedback event listeners
-    if (rateRouteBtn) {
-        rateRouteBtn.addEventListener('click', handleRateRoute);
-    }
-    if (closeFeedbackBtn) {
-        closeFeedbackBtn.addEventListener('click', closeFeedback);
-    }
     if (starRating) {
         setupStarRating();
     }
@@ -457,6 +435,10 @@ function displayItinerary(itinerary) {
     // Hide form, show results
     formSection.style.display = 'none';
     resultsSection.style.display = 'block';
+    
+    // Automatically load the map
+    loadMapForItinerary();
+    
     resultsSection.scrollIntoView({ behavior: 'smooth' });
 }
 
@@ -525,17 +507,14 @@ async function handleDownloadGpx() {
     }
 }
 
-// Handle view map
-async function handleViewMap() {
-    console.log('View Map button clicked');
+// Load map for itinerary
+async function loadMapForItinerary() {
+    console.log('Loading map for itinerary');
     
     if (!currentItinerary) {
-        alert('No itinerary to display. Please generate an itinerary first.');
+        console.error('No itinerary to display');
         return;
     }
-    
-    viewMapBtn.disabled = true;
-    viewMapBtn.textContent = 'Loading map...';
     
     // Build request with itinerary data to ensure consistent results
     const geometryRequest = {
@@ -572,19 +551,12 @@ async function handleViewMap() {
         
     } catch (error) {
         console.error('Error loading map:', error);
-        alert(`Error loading map: ${error.message}`);
-    } finally {
-        viewMapBtn.disabled = false;
-        viewMapBtn.textContent = 'View Map';
     }
 }
 
 // Display map with route
 function displayMap(geometryData) {
     console.log('Displaying map with geometry data:', geometryData);
-    
-    // Show map section first
-    mapSection.style.display = 'block';
     
     // Use requestAnimationFrame to ensure DOM is updated before initializing map
     requestAnimationFrame(() => {
@@ -600,7 +572,6 @@ function displayMap(geometryData) {
                 console.log('Map initialized successfully');
             } catch (error) {
                 console.error('Error initializing map:', error);
-                alert('Error initializing map. Please check the browser console.');
                 return;
             }
         }
@@ -711,14 +682,6 @@ function drawRouteOnMap(geometryData) {
         const bounds = L.latLngBounds(allCoords);
         map.fitBounds(bounds, { padding: [50, 50] });
     }
-    
-    // Scroll to map
-    mapSection.scrollIntoView({ behavior: 'smooth' });
-}
-
-// Handle close map
-function handleCloseMap() {
-    mapSection.style.display = 'none';
 }
 
 // Handle generate new
@@ -744,12 +707,7 @@ function handleGenerateNew() {
     currentRequestParams = null;
     
     // Reset feedback state
-    feedbackRating = 0;
-    feedbackSubmitted = false;
-    if (rateRouteBtn) {
-        rateRouteBtn.disabled = false;
-        rateRouteBtn.textContent = 'Rate This Route';
-    }
+    resetFeedbackState();
     
     // Clear map layers
     if (map) {
@@ -759,13 +717,9 @@ function handleGenerateNew() {
         routeLayers = [];
     }
     
-    // Hide results, errors, map, and feedback
+    // Hide results and errors
     resultsSection.style.display = 'none';
     errorDiv.style.display = 'none';
-    mapSection.style.display = 'none';
-    if (feedbackSection) {
-        feedbackSection.style.display = 'none';
-    }
     
     // Show form
     formSection.style.display = 'block';
@@ -783,32 +737,13 @@ const ratingLabels = {
     5: 'Excellent'
 };
 
-// Handle rate route button click
-function handleRateRoute() {
-    if (!currentItinerary) {
-        alert('No itinerary to rate. Please generate an itinerary first.');
-        return;
-    }
-    
-    if (feedbackSubmitted) {
-        alert('You have already submitted feedback for this route.');
-        return;
-    }
-    
-    // Reset feedback state
+// Reset feedback to initial state
+function resetFeedbackState() {
     feedbackRating = 0;
+    feedbackSubmitted = false;
     resetStarRating();
     resetFeedbackReasons();
-    
-    // Show feedback section with step 1
     showFeedbackStep1();
-    feedbackSection.style.display = 'block';
-    feedbackSection.scrollIntoView({ behavior: 'smooth' });
-}
-
-// Close feedback section
-function closeFeedback() {
-    feedbackSection.style.display = 'none';
 }
 
 // Setup star rating interaction
@@ -884,11 +819,6 @@ function showFeedbackStep3() {
     feedbackStep1.style.display = 'none';
     feedbackStep2.style.display = 'none';
     feedbackStep3.style.display = 'block';
-    
-    // Auto-close after 3 seconds
-    setTimeout(() => {
-        closeFeedback();
-    }, 3000);
 }
 
 // Get selected feedback reasons
@@ -951,9 +881,6 @@ async function handleSubmitFeedback() {
         
         // Success - mark as submitted and show thank you
         feedbackSubmitted = true;
-        rateRouteBtn.disabled = true;
-        rateRouteBtn.textContent = 'Feedback Submitted';
-        
         showFeedbackStep3();
         
     } catch (error) {

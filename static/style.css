@@ -391,52 +391,15 @@ button:disabled {
 }
 
 .map-section {
-    margin-top: 30px;
-    padding: 20px;
-    background: var(--card-white);
-    border-radius: 6px;
-    border: 1px solid var(--border-light);
-    position: relative;
-}
-
-.map-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 15px;
-}
-
-.map-header h2 {
-    color: var(--text-primary);
-    margin: 0;
-}
-
-.btn-close {
-    background: var(--text-secondary);
-    color: white;
-    border: none;
-    border-radius: 50%;
-    width: 35px;
-    height: 35px;
-    font-size: 24px;
-    line-height: 1;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    flex: 0 0 auto;
-    transition: background 0.2s;
-}
-
-.btn-close:hover {
-    background: var(--text-primary);
+    margin-bottom: 25px;
+    border-radius: 8px;
+    overflow: hidden;
 }
 
 .map-container {
     width: 100%;
-    height: 600px;
-    border-radius: 4px;
+    height: 450px;
+    border-radius: 8px;
     overflow: hidden;
     border: 1px solid var(--border-medium);
     background: var(--bg-grey);
@@ -470,38 +433,11 @@ button:disabled {
     border: 1px solid var(--border-light);
 }
 
-.feedback-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 20px;
-}
-
-.feedback-header h3 {
+.feedback-title {
     color: var(--text-primary);
-    margin: 0;
+    margin: 0 0 20px 0;
     font-size: 1.3em;
-}
-
-.btn-close-small {
-    background: var(--text-secondary);
-    color: white;
-    border: none;
-    border-radius: 50%;
-    width: 28px;
-    height: 28px;
-    font-size: 18px;
-    line-height: 1;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    transition: background 0.2s;
-}
-
-.btn-close-small:hover {
-    background: var(--text-primary);
+    text-align: center;
 }
 
 .feedback-step {
@@ -699,7 +635,7 @@ button:disabled {
     }
 
     .map-container {
-        height: 400px;
+        height: 300px;
     }
 
     .star {

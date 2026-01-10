@@ -56,6 +56,10 @@
         <div id="error" class="error" style="display: none;"></div>
 
         <div id="results-section" class="results-section" style="display: none;">
+            <div id="map-section" class="map-section">
+                <div id="map" class="map-container"></div>
+            </div>
+
             <h2>Generated Itinerary</h2>
             
             <div id="itinerary-summary" class="summary"></div>
@@ -65,16 +69,11 @@
             <div class="actions">
                 <button id="generate-new-btn" class="btn-secondary">← Back</button>
                 <button id="download-gpx-btn" class="btn-primary">Download GPX</button>
-                <button id="view-map-btn" class="btn-primary">View Map</button>
-                <button id="rate-route-btn" class="btn-primary">Rate Route</button>
             </div>
 
             <!-- Feedback Section -->
-            <div id="feedback-section" class="feedback-section" style="display: none;">
-                <div class="feedback-header">
-                    <h3>Rate This Route</h3>
-                    <button id="close-feedback-btn" class="btn-close-small">×</button>
-                </div>
+            <div id="feedback-section" class="feedback-section">
+                <h3 class="feedback-title">Rate This Route</h3>
 
                 <!-- Step 1: Star Rating -->
                 <div id="feedback-step-1" class="feedback-step">
@@ -131,17 +130,10 @@
             </div>
         </div>
 
-        <div id="map-section" class="map-section" style="display: none;">
-            <div class="map-header">
-                <h2>Route Map</h2>
-                <button id="close-map-btn" class="btn-close">×</button>
-            </div>
-            <div id="map" class="map-container"></div>
-        </div>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="/static/app.js?v=2"></script>
+    <script src="/static/app.js?v=4"></script>
 </body>
 </html>
 
